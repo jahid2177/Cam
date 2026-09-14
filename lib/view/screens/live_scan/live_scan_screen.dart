@@ -8,6 +8,7 @@ import 'package:openscan/l10n/app_localizations.dart';
 import 'package:openscan/config/globals.dart';
 import 'package:openscan/core/cv/frame_adapter.dart';
 import 'package:openscan/core/data/file_operations.dart';
+import 'package:openscan/core/id_card/id_card_composer.dart';
 import 'package:openscan/core/settings/app_settings.dart';
 import 'package:openscan/core/theme/os_colors.dart';
 import 'package:openscan/core/theme/os_tokens.dart';
@@ -27,6 +28,8 @@ const _kAutoCapturePrefKey = 'liveScanAutoCaptureEnabled';
 const double _kSideControlSize = 60;
 
 enum _ScanSessionMode { single, batch }
+
+enum _ScanCaptureMode { scan, idCard, translate }
 
 /// One page captured in a live-scan session: the full-resolution photo,
 /// plus the document boundary that was on screen at the moment of capture
@@ -126,6 +129,12 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   // Modern camera UI mode. Single returns after one successful capture;
   // Batch keeps the original multi-page OpenScan session behaviour.
   _ScanSessionMode _sessionMode = _ScanSessionMode.single;
+  _ScanCaptureMode _captureMode = _ScanCaptureMode.scan;
+
+  // ID Card mode captures exactly two sides and combines them into one
+  // portrait A4-style page before returning to the document.
+  final List<LiveCapture> _idCardSides = [];
+  bool _composingIdCard = false;
 
   /// Where processed pages are staged until the document adopts them.
   /// Resolved once per session, on the first capture.
@@ -450,16 +459,46 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       // waits on the encode, so the viewfinder is live and detecting again
       // while the last page finishes in the background.
       await controller.startImageStream(_onFrame);
-      _capturedFiles.add(await _prepareCapture(File(shot.path), quadAtCapture));
-      finishSingleAfterCapture = _sessionMode == _ScanSessionMode.single;
+      final prepared = await _prepareCapture(File(shot.path), quadAtCapture);
+      if (_captureMode == _ScanCaptureMode.idCard) {
+        _idCardSides.add(prepared);
+        if (_idCardSides.length == 1) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Front side captured. Now scan the back side.'),
+                duration: Duration(milliseconds: 1400),
+              ),
+            );
+          }
+        } else {
+          _composingIdCard = true;
+          if (mounted) setState(() {});
+          final combined = await IdCardComposer.compose(
+            front: _idCardSides[0].file,
+            back: _idCardSides[1].file,
+          );
+          _capturedFiles
+            ..clear()
+            ..add(LiveCapture(file: combined, prepared: true));
+          finishSingleAfterCapture = true;
+        }
+      } else {
+        _capturedFiles.add(prepared);
+        finishSingleAfterCapture = _sessionMode == _ScanSessionMode.single;
+      }
     } catch (e) {
       debugPrint('Capture failed: $e');
+      if (_captureMode == _ScanCaptureMode.idCard && _idCardSides.length > 1) {
+        _idCardSides.removeLast();
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text(AppLocalizations.of(context)!.couldnt_capture)),
       );
     } finally {
+      _composingIdCard = false;
       if (mounted) setState(() => _capturing = false);
     }
 
@@ -515,14 +554,59 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   }
 
   void _onUndoLastPressed() {
+    if (_captureMode == _ScanCaptureMode.idCard && _idCardSides.isNotEmpty) {
+      setState(() => _idCardSides.removeLast());
+      return;
+    }
     if (_capturedFiles.isEmpty) return;
     setState(() => _capturedFiles.removeLast());
+  }
+
+  void _selectCaptureMode(_ScanCaptureMode mode) {
+    if (mode == _ScanCaptureMode.translate) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Translate requires OCR/translation integration.'),
+        ),
+      );
+      return;
+    }
+
+    if (mode == _captureMode) return;
+    if (_capturedFiles.isNotEmpty || _idCardSides.isNotEmpty || _capturing) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Finish or undo the current scan before changing mode.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _captureMode = mode;
+      if (mode == _ScanCaptureMode.idCard) {
+        _sessionMode = _ScanSessionMode.single;
+      }
+    });
+    _quadSmoother.reset();
+    // Toggling the detector through disabled state clears its stability
+    // window without changing the user's auto-capture preference.
+    _autoCaptureDetector.enabled = false;
+    _autoCaptureDetector.enabled = _autoCaptureEnabled;
   }
 
   /// Imports pages from the gallery without leaving the session: picked
   /// images join [_capturedFiles] with no quad, so they go through the crop
   /// screen exactly like a manual shot does.
   Future<void> _onImportPressed() async {
+    if (_captureMode == _ScanCaptureMode.idCard) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Use the camera to scan the front and back of the ID card.'),
+        ),
+      );
+      return;
+    }
     try {
       final picked = await FileOperations().openGallery();
       if (picked.isEmpty || !mounted) return;
@@ -959,11 +1043,20 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       valueListenable: _quadSmoother.smoothedQuad,
       builder: (context, quad, _) {
         IconData icon = Icons.document_scanner_outlined;
-        String text = 'Point at document & hold steady';
+        String text = _captureMode == _ScanCaptureMode.idCard
+            ? (_idCardSides.isEmpty
+                ? 'Scan the front side of the ID card'
+                : 'Scan the back side of the ID card')
+            : 'Point at document & hold steady';
         Color chipColor = const Color(0xCC1B1E24);
         Color ink = Colors.white;
 
-        if (_lowLight) {
+        if (_composingIdCard) {
+          icon = Icons.credit_card_rounded;
+          text = 'Creating ID card page…';
+          chipColor = accent.withValues(alpha: 0.92);
+          ink = onAccent;
+        } else if (_lowLight) {
           icon = Icons.nightlight_round;
           text = 'More light needed';
           chipColor = context.os.warning.withValues(alpha: 0.90);
@@ -975,7 +1068,11 @@ class _LiveScanScreenState extends State<LiveScanScreen>
           ink = onAccent;
         } else if (quad != null) {
           icon = Icons.check_box_outline_blank_rounded;
-          text = 'Document detected';
+          text = _captureMode == _ScanCaptureMode.idCard
+              ? (_idCardSides.isEmpty
+                  ? 'Front side detected • Hold steady'
+                  : 'Back side detected • Hold steady')
+              : 'Document detected';
           chipColor = const Color(0xD922272E);
         }
 
@@ -1085,6 +1182,7 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   }
 
   Widget _sessionModeToggle() {
+    final idMode = _captureMode == _ScanCaptureMode.idCard;
     return Container(
       width: 250,
       padding: const EdgeInsets.all(4),
@@ -1096,16 +1194,28 @@ class _LiveScanScreenState extends State<LiveScanScreen>
         children: [
           Expanded(
             child: _SegmentButton(
-              label: 'Single',
-              selected: _sessionMode == _ScanSessionMode.single,
-              onTap: () => setState(() => _sessionMode = _ScanSessionMode.single),
+              label: idMode ? 'Front' : 'Single',
+              selected: idMode
+                  ? _idCardSides.isEmpty
+                  : _sessionMode == _ScanSessionMode.single,
+              onTap: idMode
+                  ? () {}
+                  : () => setState(
+                        () => _sessionMode = _ScanSessionMode.single,
+                      ),
             ),
           ),
           Expanded(
             child: _SegmentButton(
-              label: 'Batch',
-              selected: _sessionMode == _ScanSessionMode.batch,
-              onTap: () => setState(() => _sessionMode = _ScanSessionMode.batch),
+              label: idMode ? 'Back' : 'Batch',
+              selected: idMode
+                  ? _idCardSides.isNotEmpty
+                  : _sessionMode == _ScanSessionMode.batch,
+              onTap: idMode
+                  ? () {}
+                  : () => setState(
+                        () => _sessionMode = _ScanSessionMode.batch,
+                      ),
             ),
           ),
         ],
@@ -1117,11 +1227,25 @@ class _LiveScanScreenState extends State<LiveScanScreen>
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _ModeTab(label: 'Scan', selected: true, accent: accent),
+        _ModeTab(
+          label: 'Scan',
+          selected: _captureMode == _ScanCaptureMode.scan,
+          accent: accent,
+          onTap: () => _selectCaptureMode(_ScanCaptureMode.scan),
+        ),
         const SizedBox(width: 36),
-        const _ModeTab(label: 'ID Cards', selected: false),
+        _ModeTab(
+          label: 'ID Cards',
+          selected: _captureMode == _ScanCaptureMode.idCard,
+          accent: accent,
+          onTap: () => _selectCaptureMode(_ScanCaptureMode.idCard),
+        ),
         const SizedBox(width: 36),
-        const _ModeTab(label: 'Translate', selected: false),
+        _ModeTab(
+          label: 'Translate',
+          selected: false,
+          onTap: () => _selectCaptureMode(_ScanCaptureMode.translate),
+        ),
       ],
     );
   }
@@ -1179,7 +1303,7 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       builder: (sheetContext) => _CameraOptionsSheet(
         gridVisible: _gridVisible,
         canSwitchCamera: Globals.cameras.length > 1,
-        canUndo: _capturedFiles.isNotEmpty,
+        canUndo: _capturedFiles.isNotEmpty || _idCardSides.isNotEmpty,
         canFinish: _capturedFiles.isNotEmpty && !_capturing,
         onToggleGrid: () {
           Navigator.pop(sheetContext);
@@ -1765,38 +1889,47 @@ class _ModeTab extends StatelessWidget {
   const _ModeTab({
     required this.label,
     required this.selected,
+    required this.onTap,
     this.accent,
   });
 
   final String label;
   final bool selected;
+  final VoidCallback onTap;
   final Color? accent;
 
   @override
   Widget build(BuildContext context) {
     final active = accent ?? Theme.of(context).colorScheme.primary;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: selected ? active : Colors.white70,
-            fontSize: 17,
-            fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
-          ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? active : Colors.white70,
+                fontSize: 17,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 8),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              height: 4,
+              width: selected ? 30 : 0,
+              decoration: BoxDecoration(
+                color: active,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          height: 4,
-          width: selected ? 30 : 0,
-          decoration: BoxDecoration(
-            color: active,
-            borderRadius: BorderRadius.circular(4),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
