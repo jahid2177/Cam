@@ -26,6 +26,8 @@ const _kAutoCapturePrefKey = 'liveScanAutoCaptureEnabled';
 /// peers of the 70px shutter rather than as afterthoughts beside it.
 const double _kSideControlSize = 60;
 
+enum _ScanSessionMode { single, batch }
+
 /// One page captured in a live-scan session: the full-resolution photo,
 /// plus the document boundary that was on screen at the moment of capture
 /// (fractional [0,1] portrait-overlay coordinates — see
@@ -120,6 +122,10 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   // underlying photo files are already persisted to disk by
   // takePicture(), so this survives a background/resume cycle.
   final List<LiveCapture> _capturedFiles = [];
+
+  // Modern camera UI mode. Single returns after one successful capture;
+  // Batch keeps the original multi-page OpenScan session behaviour.
+  _ScanSessionMode _sessionMode = _ScanSessionMode.single;
 
   /// Where processed pages are staged until the document adopts them.
   /// Resolved once per session, on the first capture.
@@ -388,6 +394,7 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   }
 
   Future<void> _onCapturePressed() async {
+    var finishSingleAfterCapture = false;
     final controller = _cameraController;
     if (controller == null || _capturing) return;
     // Snapshot the overlay's current quad before anything else: this is
@@ -444,6 +451,7 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       // while the last page finishes in the background.
       await controller.startImageStream(_onFrame);
       _capturedFiles.add(await _prepareCapture(File(shot.path), quadAtCapture));
+      finishSingleAfterCapture = _sessionMode == _ScanSessionMode.single;
     } catch (e) {
       debugPrint('Capture failed: $e');
       if (!mounted) return;
@@ -453,6 +461,10 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       );
     } finally {
       if (mounted) setState(() => _capturing = false);
+    }
+
+    if (finishSingleAfterCapture && mounted && _capturedFiles.isNotEmpty) {
+      Navigator.pop(context, List<LiveCapture>.from(_capturedFiles));
     }
   }
 
@@ -514,6 +526,13 @@ class _LiveScanScreenState extends State<LiveScanScreen>
     try {
       final picked = await FileOperations().openGallery();
       if (picked.isEmpty || !mounted) return;
+      if (_sessionMode == _ScanSessionMode.single) {
+        Navigator.pop(
+          context,
+          <LiveCapture>[LiveCapture(file: picked.first, imported: true)],
+        );
+        return;
+      }
       setState(() {
         for (final file in picked) {
           _capturedFiles.add(LiveCapture(file: file, imported: true));
@@ -733,16 +752,31 @@ class _LiveScanScreenState extends State<LiveScanScreen>
                 : Stack(
                     fit: StackFit.expand,
                     children: [
-                      // The viewfinder is a bounded box with the controls
-                      // laid out around it, rather than one full-bleed
-                      // feed with buttons floating on top: nothing the
-                      // camera sees ends up underneath a button.
+                      // Full-screen live camera, matching the modern
+                      // scanner structure while keeping the existing
+                      // OpenScan detection/capture pipeline untouched.
+                      _preview(accent, onAccent),
+                      const IgnorePointer(child: _ScannerGradientOverlay()),
                       SafeArea(
-                        child: Column(
+                        child: Stack(
+                          fit: StackFit.expand,
                           children: [
-                            _topChrome(accent),
-                            Expanded(child: _previewBox(accent, onAccent)),
-                            _bottomChrome(accent, onAccent),
+                            Align(
+                              alignment: Alignment.topCenter,
+                              child: _modernTopBar(accent),
+                            ),
+                            Positioned(
+                              left: OSSpace.md,
+                              right: OSSpace.md,
+                              top: 112,
+                              child: Center(
+                                child: _modernStatusPill(accent, onAccent),
+                              ),
+                            ),
+                            Align(
+                              alignment: Alignment.bottomCenter,
+                              child: _modernBottomPanel(accent, onAccent),
+                            ),
                           ],
                         ),
                       ),
@@ -870,7 +904,6 @@ class _LiveScanScreenState extends State<LiveScanScreen>
                             ),
                           ),
                         ),
-                      _statusOverlay(accent, onAccent),
                       if (_maxZoom > _minZoom) _zoomSlider(),
                     ],
                   ),
@@ -880,6 +913,321 @@ class _LiveScanScreenState extends State<LiveScanScreen>
           ),
         );
       },
+    );
+  }
+
+  Widget _modernTopBar(Color accent) {
+    final canTorch = _cameraController != null &&
+        _lensDirection == CameraLensDirection.back;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(OSSpace.md, OSSpace.sm, OSSpace.md, 0),
+      child: Row(
+        children: [
+          _ModernCircleButton(
+            icon: Icons.close_rounded,
+            onPressed: () => Navigator.pop(context, null),
+          ),
+          const Spacer(),
+          _ModernCircleButton(
+            icon: _torchOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+            selected: _torchOn,
+            selectedColor: accent,
+            onPressed: canTorch ? _toggleTorch : null,
+          ),
+          const SizedBox(width: 10),
+          _ModernCircleButton(
+            icon: Icons.auto_awesome_rounded,
+            selected: _autoCaptureEnabled,
+            selectedColor: accent,
+            onPressed: _toggleAutoCapture,
+          ),
+          const SizedBox(width: 10),
+          _HdBadge(accent: accent),
+          const SizedBox(width: 10),
+          _ModernCircleButton(
+            icon: Icons.more_vert_rounded,
+            onPressed: _openMoreSheet,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _modernStatusPill(Color accent, Color onAccent) {
+    return ValueListenableBuilder<Quad?>(
+      valueListenable: _quadSmoother.smoothedQuad,
+      builder: (context, quad, _) {
+        IconData icon = Icons.document_scanner_outlined;
+        String text = 'Point at document & hold steady';
+        Color chipColor = const Color(0xCC1B1E24);
+        Color ink = Colors.white;
+
+        if (_lowLight) {
+          icon = Icons.nightlight_round;
+          text = 'More light needed';
+          chipColor = context.os.warning.withValues(alpha: 0.90);
+          ink = Colors.black;
+        } else if (_autoCaptureImminent) {
+          icon = Icons.center_focus_strong_rounded;
+          text = 'Hold steady • Auto capture';
+          chipColor = accent.withValues(alpha: 0.92);
+          ink = onAccent;
+        } else if (quad != null) {
+          icon = Icons.check_box_outline_blank_rounded;
+          text = 'Document detected';
+          chipColor = const Color(0xD922272E);
+        }
+
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          constraints: const BoxConstraints(maxWidth: 420),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          decoration: BoxDecoration(
+            color: chipColor,
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x50000000),
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 20, color: ink),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: OSTypography.body.copyWith(
+                    color: ink,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _modernBottomPanel(Color accent, Color onAccent) {
+    final count = _capturedFiles.length;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
+      decoration: const BoxDecoration(
+        color: Color(0xF21A1C21),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(34),
+          topRight: Radius.circular(34),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 30,
+            offset: Offset(0, -8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _sessionModeToggle(),
+          const SizedBox(height: 16),
+          _scanModeTabs(accent),
+          const SizedBox(height: 22),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: _PanelAction(
+                  icon: Icons.grid_view_rounded,
+                  label: 'All Features',
+                  onTap: _openFeaturesSheet,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _modernShutter(accent),
+              ),
+              Expanded(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _PanelAction(
+                      icon: Icons.image_outlined,
+                      label: 'Images',
+                      onTap: _onImportPressed,
+                    ),
+                    _PanelAction(
+                      icon: Icons.folder_outlined,
+                      label: count > 0 ? 'Files ($count)' : 'Files',
+                      onTap: count > 0 && !_capturing
+                          ? _onDonePressed
+                          : () => Navigator.pop(context, null),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sessionModeToggle() {
+    return Container(
+      width: 250,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF202329),
+        borderRadius: BorderRadius.circular(28),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _SegmentButton(
+              label: 'Single',
+              selected: _sessionMode == _ScanSessionMode.single,
+              onTap: () => setState(() => _sessionMode = _ScanSessionMode.single),
+            ),
+          ),
+          Expanded(
+            child: _SegmentButton(
+              label: 'Batch',
+              selected: _sessionMode == _ScanSessionMode.batch,
+              onTap: () => setState(() => _sessionMode = _ScanSessionMode.batch),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _scanModeTabs(Color accent) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        _ModeTab(label: 'Scan', selected: true, accent: accent),
+        const SizedBox(width: 36),
+        const _ModeTab(label: 'ID Cards', selected: false),
+        const SizedBox(width: 36),
+        const _ModeTab(label: 'Translate', selected: false),
+      ],
+    );
+  }
+
+  Widget _modernShutter(Color accent) {
+    if (_capturing) {
+      return SizedBox(
+        width: 92,
+        height: 92,
+        child: Center(child: CircularProgressIndicator(color: accent)),
+      );
+    }
+
+    final locked = _quadSmoother.smoothedQuad.value != null;
+    return GestureDetector(
+      onLongPress: _toggleAutoCapture,
+      onTap: _cameraController != null ? _onCapturePressed : null,
+      child: SizedBox(
+        width: 92,
+        height: 92,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (_autoCaptureImminent)
+              _PulseRing(color: accent),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 86,
+              height: 86,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: locked ? accent : accent.withValues(alpha: 0.92),
+                  width: 5,
+                ),
+              ),
+              padding: const EdgeInsets.all(7),
+              child: Container(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openMoreSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _CameraOptionsSheet(
+        gridVisible: _gridVisible,
+        canSwitchCamera: Globals.cameras.length > 1,
+        canUndo: _capturedFiles.isNotEmpty,
+        canFinish: _capturedFiles.isNotEmpty && !_capturing,
+        onToggleGrid: () {
+          Navigator.pop(sheetContext);
+          setState(() => _gridVisible = !_gridVisible);
+        },
+        onSwitchCamera: () {
+          Navigator.pop(sheetContext);
+          _switchCamera();
+        },
+        onUndo: () {
+          Navigator.pop(sheetContext);
+          _onUndoLastPressed();
+        },
+        onFinish: () {
+          Navigator.pop(sheetContext);
+          _onDonePressed();
+        },
+      ),
+    );
+  }
+
+  Future<void> _openFeaturesSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _FeaturesSheet(
+        autoCapture: _autoCaptureEnabled,
+        gridVisible: _gridVisible,
+        torchOn: _torchOn,
+        canTorch: _cameraController != null &&
+            _lensDirection == CameraLensDirection.back,
+        onAutoCapture: () {
+          Navigator.pop(sheetContext);
+          _toggleAutoCapture();
+        },
+        onGrid: () {
+          Navigator.pop(sheetContext);
+          setState(() => _gridVisible = !_gridVisible);
+        },
+        onTorch: () {
+          Navigator.pop(sheetContext);
+          _toggleTorch();
+        },
+        onImages: () {
+          Navigator.pop(sheetContext);
+          _onImportPressed();
+        },
+      ),
     );
   }
 
@@ -1284,6 +1632,397 @@ class _LiveScanScreenState extends State<LiveScanScreen>
           textAlign: TextAlign.center,
         ),
       ),
+    );
+  }
+}
+
+class _ScannerGradientOverlay extends StatelessWidget {
+  const _ScannerGradientOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.30),
+            Colors.transparent,
+            Colors.transparent,
+            Colors.black.withValues(alpha: 0.18),
+          ],
+          stops: const [0.0, 0.18, 0.70, 1.0],
+        ),
+      ),
+    );
+  }
+}
+
+class _ModernCircleButton extends StatelessWidget {
+  const _ModernCircleButton({
+    required this.icon,
+    required this.onPressed,
+    this.selected = false,
+    this.selectedColor,
+  });
+
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final bool selected;
+  final Color? selectedColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selectedColor ?? Theme.of(context).colorScheme.primary;
+    return Material(
+      color: selected ? color : const Color(0x991C1F24),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPressed,
+        child: SizedBox(
+          width: 54,
+          height: 54,
+          child: Icon(
+            icon,
+            size: 28,
+            color: onPressed == null ? Colors.white38 : Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HdBadge extends StatelessWidget {
+  const _HdBadge({required this.accent});
+
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 58,
+      height: 58,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: accent,
+        shape: BoxShape.circle,
+        boxShadow: const [
+          BoxShadow(color: Color(0x33000000), blurRadius: 8),
+        ],
+      ),
+      child: const Text(
+        'HD',
+        style: TextStyle(
+          color: Colors.black,
+          fontSize: 18,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _SegmentButton extends StatelessWidget {
+  const _SegmentButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? const Color(0xFF5B667A) : Colors.transparent,
+      borderRadius: BorderRadius.circular(24),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeTab extends StatelessWidget {
+  const _ModeTab({
+    required this.label,
+    required this.selected,
+    this.accent,
+  });
+
+  final String label;
+  final bool selected;
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = accent ?? Theme.of(context).colorScheme.primary;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: selected ? active : Colors.white70,
+            fontSize: 17,
+            fontWeight: selected ? FontWeight.w800 : FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 8),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          height: 4,
+          width: selected ? 30 : 0,
+          decoration: BoxDecoration(
+            color: active,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PanelAction extends StatelessWidget {
+  const _PanelAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: Colors.white, size: 30),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CameraOptionsSheet extends StatelessWidget {
+  const _CameraOptionsSheet({
+    required this.gridVisible,
+    required this.canSwitchCamera,
+    required this.canUndo,
+    required this.canFinish,
+    required this.onToggleGrid,
+    required this.onSwitchCamera,
+    required this.onUndo,
+    required this.onFinish,
+  });
+
+  final bool gridVisible;
+  final bool canSwitchCamera;
+  final bool canUndo;
+  final bool canFinish;
+  final VoidCallback onToggleGrid;
+  final VoidCallback onSwitchCamera;
+  final VoidCallback onUndo;
+  final VoidCallback onFinish;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SheetShell(
+      title: 'Camera options',
+      children: [
+        _SheetTile(
+          icon: Icons.grid_3x3_rounded,
+          title: gridVisible ? 'Hide grid' : 'Show grid',
+          onTap: onToggleGrid,
+        ),
+        _SheetTile(
+          icon: Icons.cameraswitch_rounded,
+          title: 'Switch camera',
+          onTap: canSwitchCamera ? onSwitchCamera : null,
+        ),
+        _SheetTile(
+          icon: Icons.undo_rounded,
+          title: 'Undo last capture',
+          onTap: canUndo ? onUndo : null,
+        ),
+        _SheetTile(
+          icon: Icons.check_circle_outline_rounded,
+          title: 'Finish scan',
+          onTap: canFinish ? onFinish : null,
+        ),
+      ],
+    );
+  }
+}
+
+class _FeaturesSheet extends StatelessWidget {
+  const _FeaturesSheet({
+    required this.autoCapture,
+    required this.gridVisible,
+    required this.torchOn,
+    required this.canTorch,
+    required this.onAutoCapture,
+    required this.onGrid,
+    required this.onTorch,
+    required this.onImages,
+  });
+
+  final bool autoCapture;
+  final bool gridVisible;
+  final bool torchOn;
+  final bool canTorch;
+  final VoidCallback onAutoCapture;
+  final VoidCallback onGrid;
+  final VoidCallback onTorch;
+  final VoidCallback onImages;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SheetShell(
+      title: 'All Features',
+      children: [
+        _SheetTile(
+          icon: Icons.auto_awesome_rounded,
+          title: autoCapture ? 'Auto capture: On' : 'Auto capture: Off',
+          onTap: onAutoCapture,
+        ),
+        _SheetTile(
+          icon: Icons.grid_3x3_rounded,
+          title: gridVisible ? 'Composition grid: On' : 'Composition grid: Off',
+          onTap: onGrid,
+        ),
+        _SheetTile(
+          icon: torchOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+          title: torchOn ? 'Torch: On' : 'Torch: Off',
+          onTap: canTorch ? onTorch : null,
+        ),
+        _SheetTile(
+          icon: Icons.photo_library_outlined,
+          title: 'Import images',
+          onTap: onImages,
+        ),
+      ],
+    );
+  }
+}
+
+class _SheetShell extends StatelessWidget {
+  const _SheetShell({required this.title, required this.children});
+
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+        decoration: const BoxDecoration(
+          color: Color(0xFF1B1D22),
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(30),
+            topRight: Radius.circular(30),
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetTile extends StatelessWidget {
+  const _SheetTile({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      enabled: onTap != null,
+      onTap: onTap,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: onTap == null ? Colors.white30 : Colors.white),
+      title: Text(
+        title,
+        style: TextStyle(
+          color: onTap == null ? Colors.white30 : Colors.white,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      trailing: onTap == null
+          ? null
+          : const Icon(Icons.chevron_right_rounded, color: Colors.white54),
     );
   }
 }
