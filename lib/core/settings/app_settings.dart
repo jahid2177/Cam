@@ -5,6 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// How the library grid is ordered.
 enum LibrarySort { lastModified, created, name, pageCount }
 
+/// Where exported PDF/image files should be written.
+enum ExportStorageLocation { downloads, appFolder }
+
 /// App-wide preferences, persisted to [SharedPreferences].
 ///
 /// A plain [ChangeNotifier] rather than a Bloc: these are single values with
@@ -24,6 +27,7 @@ class AppSettings extends ChangeNotifier {
   static const _kDefaultFilter = 'defaultFilter';
   static const _kSort = 'librarySort';
   static const _kAvoidGestureStrip = 'cropAvoidGestureStrip';
+  static const _kExportStorageLocation = 'exportStorageLocation';
 
   SharedPreferences? _prefs;
 
@@ -35,6 +39,7 @@ class AppSettings extends ChangeNotifier {
   String? _defaultFilter;
   LibrarySort _sort = LibrarySort.lastModified;
   bool _avoidGestureStrip = false;
+  ExportStorageLocation _exportStorageLocation = ExportStorageLocation.downloads;
 
   ThemeMode get themeMode => _themeMode;
   OSAccentFamily get accent => _accent;
@@ -51,6 +56,7 @@ class AppSettings extends ChangeNotifier {
   /// [Filter.name] applied to new pages, or null for none.
   String? get defaultFilter => _defaultFilter;
   LibrarySort get sort => _sort;
+  ExportStorageLocation get exportStorageLocation => _exportStorageLocation;
 
   Future<void> load() async {
     final prefs = _prefs = await SharedPreferences.getInstance();
@@ -74,6 +80,10 @@ class AppSettings extends ChangeNotifier {
     _sort = LibrarySort.values.firstWhere(
       (s) => s.name == prefs.getString(_kSort),
       orElse: () => LibrarySort.lastModified,
+    );
+    _exportStorageLocation = ExportStorageLocation.values.firstWhere(
+      (location) => location.name == prefs.getString(_kExportStorageLocation),
+      orElse: () => ExportStorageLocation.downloads,
     );
     notifyListeners();
   }
@@ -129,4 +139,11 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     await _prefs?.setString(_kSort, sort.name);
   }
+
+  Future<void> setExportStorageLocation(ExportStorageLocation location) async {
+    _exportStorageLocation = location;
+    notifyListeners();
+    await _prefs?.setString(_kExportStorageLocation, location.name);
+  }
 }
+
