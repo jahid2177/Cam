@@ -100,7 +100,8 @@ Quad quadInPixelsOf(Quad normalized, int width, int height) {
 /// is averaged rather than point-sampled.
 img.Image? warpToPage(img.Image decoded, Quad quad, {int? maxEdge}) {
   var source = decoded;
-  var pixels = quad;
+  var pixels = _sanitizeQuad(quad, decoded.width, decoded.height);
+  if (!_isUsableQuad(pixels, decoded.width, decoded.height)) return null;
 
   final natural = outputSize(pixels);
   var outWidth = natural.width;
@@ -132,7 +133,11 @@ img.Image? warpToPage(img.Image decoded, Quad quad, {int? maxEdge}) {
 Future<CropResult> _cropDecoded(img.Image decoded, Quad quad, String path,
     {int quarterTurns = 0}) async {
   try {
-    var warped = _warp(decoded, quad, null, null);
+    final safeQuad = _sanitizeQuad(quad, decoded.width, decoded.height);
+    if (!_isUsableQuad(safeQuad, decoded.width, decoded.height)) {
+      return const CropFailure('Invalid or too-small document boundary');
+    }
+    var warped = _warp(decoded, safeQuad, null, null);
     if (warped == null) return const CropFailure('Could not warp image');
     if (quarterTurns % 4 != 0) {
       warped = img.copyRotate(warped, angle: 90 * (quarterTurns % 4));
@@ -143,6 +148,57 @@ Future<CropResult> _cropDecoded(img.Image decoded, Quad quad, String path,
   } catch (e) {
     return CropFailure(e.toString());
   }
+}
+
+
+/// Keeps crop corners inside the decoded image. Live camera coordinates and
+/// manual crop handles can occasionally land a fraction of a pixel outside
+/// the source after rotation/scaling; clamping here prevents black wedges and
+/// unstable homography results without changing the visible crop.
+Quad _sanitizeQuad(Quad quad, int width, int height) {
+  final maxX = max(0.0, width - 1.0);
+  final maxY = max(0.0, height - 1.0);
+
+  Pt clampPoint(Pt p) => Pt(
+        p.x.clamp(0.0, maxX).toDouble(),
+        p.y.clamp(0.0, maxY).toDouble(),
+      );
+
+  return Quad(
+    topLeft: clampPoint(quad.topLeft),
+    topRight: clampPoint(quad.topRight),
+    bottomRight: clampPoint(quad.bottomRight),
+    bottomLeft: clampPoint(quad.bottomLeft),
+  );
+}
+
+/// Rejects degenerate quads before solving a perspective transform. This is
+/// especially useful after a very fast drag/rotation where two handles may
+/// temporarily become almost coincident.
+bool _isUsableQuad(Quad quad, int width, int height) {
+  if (width < 2 || height < 2) return false;
+
+  final pts = quad.points;
+  double twiceArea = 0;
+  for (int i = 0; i < pts.length; i++) {
+    final a = pts[i];
+    final b = pts[(i + 1) % pts.length];
+    twiceArea += a.x * b.y - b.x * a.y;
+  }
+  final area = twiceArea.abs() * 0.5;
+  final imageArea = width * height.toDouble();
+  if (area < max(16.0, imageArea * 0.0005)) return false;
+
+  final edges = <double>[
+    _dist(quad.topLeft.x, quad.topLeft.y, quad.topRight.x, quad.topRight.y),
+    _dist(quad.topRight.x, quad.topRight.y, quad.bottomRight.x, quad.bottomRight.y),
+    _dist(quad.bottomRight.x, quad.bottomRight.y, quad.bottomLeft.x, quad.bottomLeft.y),
+    _dist(quad.bottomLeft.x, quad.bottomLeft.y, quad.topLeft.x, quad.topLeft.y),
+  ];
+  if (edges.any((e) => !e.isFinite || e < 2.0)) return false;
+
+  final natural = outputSize(quad);
+  return natural.width >= 2 && natural.height >= 2;
 }
 
 /// The size an unscaled warp of [quad] produces: the longest of each pair
@@ -280,10 +336,16 @@ List<double> _solveLinearSystem(List<List<double>> a, List<double> b) {
 }
 
 List<double> _applyHomography(List<double> h, double u, double v) {
-  final denom = h[6] * u + h[7] * v + 1;
+  var denom = h[6] * u + h[7] * v + 1;
+  if (!denom.isFinite || denom.abs() < 1e-9) {
+    denom = denom.isNegative ? -1e-9 : 1e-9;
+  }
   final x = (h[0] * u + h[1] * v + h[2]) / denom;
   final y = (h[3] * u + h[4] * v + h[5]) / denom;
-  return [x, y];
+  return [
+    x.isFinite ? x : 0.0,
+    y.isFinite ? y : 0.0,
+  ];
 }
 
 List<int> _bilinearSample(
