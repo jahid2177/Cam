@@ -46,13 +46,13 @@ class QuadSmoother {
   /// essentially stationary — lower means more smoothing at rest. Starting
   /// point for on-device tuning, same convention as
   /// `AutoCaptureDetector`'s threshold constants.
-  static const double kMinCutoffHz = 0.5;
+  static const double kMinCutoffHz = 0.42;
 
   /// How much the cutoff frequency increases per unit of estimated corner
   /// speed (normalized [0,1] units/second) — higher means the filter
   /// "opens up" and tracks a fast, deliberate move more closely instead of
   /// smoothing it into a lag.
-  static const double kBeta = 0.5;
+  static const double kBeta = 0.68;
 
   /// Cutoff frequency (Hz) used to smooth the derivative estimate itself,
   /// per the One Euro Filter's standard two-stage design.
@@ -77,6 +77,13 @@ class QuadSmoother {
   /// looks like on screen. A real document being moved by hand crosses far
   /// less than this between two consecutive samples.
   static const double kJumpDistanceFraction = 0.06;
+
+  /// Motion smaller than this average per-corner fraction is treated as
+  /// sensor/contour jitter rather than intentional movement. The raw track
+  /// stays anchored, which prevents tiny threshold-to-threshold changes
+  /// from continuously exciting the position filters while a page is held
+  /// still.
+  static const double kStationaryDeadbandFraction = 0.0025;
 
   /// How many consecutive raw samples landing within
   /// [kJumpDistanceFraction] of *each other* (not of the previously
@@ -147,12 +154,17 @@ class QuadSmoother {
     final matchToTrack = bestCornerAssignment(raw.points, lastRaw);
     final trackDist = _asFraction(matchToTrack.totalDistance);
     if (trackDist < kJumpDistanceFraction) {
-      // Same document as what's currently tracked — feed it into the
-      // position filters as normal continued tracking.
+      // Same document as what's currently tracked. Suppress microscopic
+      // contour jitter completely; otherwise update through the adaptive
+      // One Euro filters so deliberate motion remains responsive.
       _pendingQuad = null;
       _pendingStreak = 0;
-      _lastRawQuad = matchToTrack.quad;
-      _trackContinued(matchToTrack.quad, now);
+      if (trackDist <= kStationaryDeadbandFraction) {
+        _trackContinued(lastRaw, now);
+      } else {
+        _lastRawQuad = matchToTrack.quad;
+        _trackContinued(matchToTrack.quad, now);
+      }
       return;
     }
 

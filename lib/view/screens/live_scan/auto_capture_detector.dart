@@ -18,18 +18,23 @@ class AutoCaptureDetector {
   /// this is set low enough to not itself become the binding constraint —
   /// [kMinStableDuration] is the actual timing knob; both conditions must
   /// hold.
-  static const int kStableFrameCount = 3;
+  static const int kStableFrameCount = 4;
 
   /// Max per-corner movement between consecutive frames, as a fraction of
   /// the normalized [0,1] coordinate space, for a frame to count as "still"
   /// relative to the previous one. Starting point for on-device tuning.
-  static const double kPositionToleranceFraction = 0.02;
+  static const double kPositionToleranceFraction = 0.016;
+
+  /// Do not auto-capture a tiny rectangle in the distance. Manual capture
+  /// remains available, but automatic capture waits until the document is
+  /// large enough to produce a useful crop.
+  static const double kMinDocumentAreaFraction = 0.12;
 
   /// Minimum wall-clock span the stable window must cover even if enough
   /// frames arrived faster than that, so a burst of quick results can't
   /// satisfy the frame-count alone. Primary knob for how long a document
   /// must be held still before auto-capture fires.
-  static const Duration kMinStableDuration = Duration(milliseconds: 700);
+  static const Duration kMinStableDuration = Duration(milliseconds: 660);
 
   /// Cooldown after any capture (auto or manual) before auto-capture can
   /// fire again, so a continuously-open batch session doesn't immediately
@@ -58,6 +63,7 @@ class AutoCaptureDetector {
   DateTime? _cooldownUntil;
   bool _enabled = true;
   bool _imminent = false;
+  bool _firedForWindow = false;
 
   bool get isEnabled => _enabled;
 
@@ -72,7 +78,7 @@ class AutoCaptureDetector {
   /// Feed each new detection result. Pass null for a frame where nothing
   /// was detected.
   void onQuadUpdate(Quad? quad) {
-    if (!_enabled || isInCooldown || quad == null) {
+    if (!_enabled || isInCooldown || quad == null || !_isLargeEnough(quad)) {
       _reset();
       return;
     }
@@ -80,13 +86,19 @@ class AutoCaptureDetector {
     if (_window.isEmpty || !_isWithinTolerance(_window.last, quad)) {
       _window.clear();
       _windowStart = _now();
+      _firedForWindow = false;
     }
     _window.add(quad);
+    if (_window.length > kStableFrameCount + 2) {
+      _window.removeAt(0);
+    }
 
     _setImminent(_window.length >= kStableFrameCount - 2);
 
-    if (_window.length >= kStableFrameCount &&
+    if (!_firedForWindow &&
+        _window.length >= kStableFrameCount &&
         _now().difference(_windowStart!) >= kMinStableDuration) {
+      _firedForWindow = true;
       onStable();
     }
   }
@@ -100,6 +112,7 @@ class AutoCaptureDetector {
   void _reset() {
     _window.clear();
     _windowStart = null;
+    _firedForWindow = false;
     _setImminent(false);
   }
 
@@ -107,6 +120,16 @@ class AutoCaptureDetector {
     if (_imminent == value) return;
     _imminent = value;
     onImminentChanged?.call(value);
+  }
+
+  bool _isLargeEnough(Quad q) {
+    final p = q.points;
+    double area = 0;
+    for (int i = 0; i < 4; i++) {
+      final a = p[i], b = p[(i + 1) % 4];
+      area += a.x * b.y - b.x * a.y;
+    }
+    return area.abs() / 2 >= kMinDocumentAreaFraction;
   }
 
   bool _isWithinTolerance(Quad a, Quad b) {
