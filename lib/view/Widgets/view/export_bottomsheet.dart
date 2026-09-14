@@ -152,7 +152,7 @@ class _ExportSheetState extends State<ExportSheet> {
   }
 
   String _documentName(DirectoryState state) =>
-      state.newName ?? state.dirName ?? 'OpenScan';
+      state.newName ?? state.dirName ?? 'DocScan';
 
   String _fileName(DirectoryState state) =>
       exportFileName(_documentName(state));
