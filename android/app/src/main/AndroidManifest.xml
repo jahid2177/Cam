@@ -1,34 +1,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     package="com.ethereal.openscan">
 
-    <!-- =========================================================
-         CAMERA
-         ========================================================= -->
+    <!-- Camera is required by the live document scanner. -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- =========================================================
-         STORAGE / MEDIA PERMISSIONS
-         ========================================================= -->
-
-    <!-- Android 12L / API 32 এবং নিচে gallery/files read করার জন্য -->
+    <!-- Android 12L (API 32) and below: read images selected from shared storage. -->
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!-- Android 9 / API 28 এবং নিচে external storage write করার জন্য -->
+    <!-- Android 9 (API 28) and below: write exports to shared external storage. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
-    <!-- Android 13 / API 33+ এ image access -->
-    <uses-permission
-        android:name="android.permission.READ_MEDIA_IMAGES" />
-
-    <!--
-        OpenScan video ব্যবহার না করলে READ_MEDIA_VIDEO লাগবে না।
-        Audio permission-ও দরকার নেই।
-    -->
+    <!-- Android 13+ image-library access. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
 
     <application
         android:name="${applicationName}"
@@ -60,49 +47,33 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-
         </activity>
 
-        <!-- =====================================================
-             FILE PROVIDER
-             Used for sharing/opening generated PDF/Image files.
-             ===================================================== -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileProvider"
             android:exported="false"
             android:grantUriPermissions="true">
-
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/filepaths" />
-
         </provider>
 
-        <!-- Required by Flutter -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
     </application>
 
-    <!-- =========================================================
-         PACKAGE VISIBILITY
-         ========================================================= -->
     <queries>
-
-        <!-- Camera applications -->
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE" />
         </intent>
 
-        <!-- Browser / external URL -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" />
         </intent>
-
     </queries>
 
 </manifest>
