@@ -6,7 +6,7 @@
 /// the created timestamp is read back from.
 library;
 
-/// The name a document gets when it is created: `OpenScan-2026-08-26-…`,
+/// The name a document gets when it is created: `DocScan-2026-08-26-…`,
 /// ending in [DateTime.millisecondsSinceEpoch].
 ///
 /// The date is there to be read and the epoch stamp to be unique — two
@@ -18,7 +18,7 @@ library;
 String defaultDocumentName(DateTime at) {
   final month = at.month.toString().padLeft(2, '0');
   final day = at.day.toString().padLeft(2, '0');
-  return 'OpenScan-${at.year}-$month-$day-${at.millisecondsSinceEpoch}';
+  return 'DocScan-${at.year}-$month-$day-${at.millisecondsSinceEpoch}';
 }
 
 /// The moment a document named [name] was created, or null if the name
@@ -29,7 +29,7 @@ String defaultDocumentName(DateTime at) {
 /// that points into it, for a cosmetic gain), so the old shape has to stay
 /// readable indefinitely, not just across one upgrade.
 DateTime? createdFromDocumentName(String name) {
-  final current = RegExp(r'^OpenScan-\d{4}-\d{2}-\d{2}-(\d+)$').firstMatch(name);
+  final current = RegExp(r'^(?:DocScan|OpenScan)-\d{4}-\d{2}-\d{2}-(\d+)$').firstMatch(name);
   if (current != null) {
     final millis = int.tryParse(current.group(1)!);
     if (millis != null) return DateTime.fromMillisecondsSinceEpoch(millis);

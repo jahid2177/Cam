@@ -15,6 +15,7 @@ import 'package:openscan/core/cv/perspective_crop.dart';
 import 'package:openscan/core/data/database_helper.dart';
 import 'package:openscan/core/data/document_naming.dart';
 import 'package:openscan/core/models.dart';
+import 'package:openscan/core/settings/app_settings.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -782,27 +783,37 @@ class FileOperations {
     }
   }
 
-  /// The directory exports land in — PDFs and images alike: a visible
-  /// OpenScan folder under Downloads, falling back to app storage where
-  /// that is not writable. There is no way to choose another one; a
-  /// directory picker is a feature this has never had.
+  /// Directory used for exported PDFs/images.
   ///
-  /// Downloads rather than Documents because of what happens next. Opening
-  /// an export goes through open_filex, which on API 30+ refuses any path
-  /// outside the app's own directories unless it matches a hardcoded list
-  /// of media folders — /DCIM/, /Pictures/, /Download/ and so on — or the
-  /// app holds MANAGE_EXTERNAL_STORAGE, which this app has no business
-  /// asking for. /Documents/ is not on that list, so every export landed
-  /// somewhere the Open button could not reach. Verified on a device:
-  /// Documents gives permissionDenied, Downloads opens.
+  /// Existing document storage is intentionally unchanged so upgrading from
+  /// OpenScan to DocScan does not orphan already-scanned pages. Only the
+  /// user-facing export destination changes.
   Future<Directory> exportDirectory() async {
-    Directory openscanDir = Directory("/storage/emulated/0/Download/OpenScan");
+    final location = AppSettings.instance.exportStorageLocation;
+
+    if (location == ExportStorageLocation.appFolder) {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory('${docs.path}/DocScan/Exports');
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      return dir;
+    }
+
+    final downloads = Directory('/storage/emulated/0/Download/DocScan');
     try {
-      if (!openscanDir.existsSync()) openscanDir.createSync(recursive: true);
-      return openscanDir;
+      if (!await downloads.exists()) {
+        await downloads.create(recursive: true);
+      }
+      return downloads;
     } catch (e) {
-      debugPrint('Falling back to app storage for export: $e');
-      return await getApplicationDocumentsDirectory();
+      debugPrint('Downloads/DocScan is not writable; using app storage: $e');
+      final docs = await getApplicationDocumentsDirectory();
+      final fallback = Directory('${docs.path}/DocScan/Exports');
+      if (!await fallback.exists()) {
+        await fallback.create(recursive: true);
+      }
+      return fallback;
     }
   }
 }
