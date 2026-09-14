@@ -73,7 +73,7 @@ Future<DetectionResult> detectDocumentIsolateEntry(String path) async {
 /// of trying multiple thresholds/channels per frame and scoring the
 /// pooled results ([pickBestQuad]) instead of committing to one strategy's
 /// output.
-const List<double> _thresholdMultipliers = [0.7, 1.0, 1.3];
+const List<double> _thresholdMultipliers = [0.58, 0.76, 1.0, 1.24, 1.46];
 
 /// Runs the grayscale->blur->sobel->(multi-threshold)->dilate->quad
 /// pipeline on an already-grayscale buffer. Pure function, no I/O —
@@ -96,19 +96,50 @@ const List<double> _thresholdMultipliers = [0.7, 1.0, 1.3];
 /// last-seen quad.
 Quad? detectQuadFromGrayscale(Uint8List gray, int width, int height,
     {Quad? previousQuad}) {
-  final blurred = gaussianBlur3(gray, width, height);
-  final magnitude = sobelMagnitude(blurred, width, height);
-  final baseThreshold = otsuThreshold(magnitude);
+  if (width < 8 || height < 8 || gray.length != width * height) return null;
+
+  // Run the detector on both the original luminance and a robustly
+  // contrast-normalized copy. The second path is especially helpful for
+  // white-on-light and dim scenes, while keeping the original path for
+  // naturally high-contrast frames where normalization is unnecessary.
+  final normalized = normalizeContrast(gray);
+  final sources = <Uint8List>[gray];
+  if (!_buffersEffectivelyEqual(gray, normalized)) {
+    sources.add(normalized);
+  }
 
   final candidates = <Quad>[];
-  for (final multiplier in _thresholdMultipliers) {
-    final t = (baseThreshold * multiplier).round().clamp(0, 255);
-    final binary = threshold(magnitude, t);
-    final dilated = dilate(binary, width, height, 4);
-    candidates.addAll(findDocumentQuadCandidates(dilated, width, height));
+  for (final source in sources) {
+    final blurred = gaussianBlur3(source, width, height);
+    final magnitude = sobelMagnitude(blurred, width, height);
+    final baseThreshold = otsuThreshold(magnitude).clamp(18, 210);
+
+    for (final multiplier in _thresholdMultipliers) {
+      final t = (baseThreshold * multiplier).round().clamp(12, 245);
+      final binary = threshold(magnitude, t);
+
+      // Radius 3 preserves nearby parallel edges better than a very large
+      // dilation. Closing reconnects short broken border segments before a
+      // modest second dilation makes the outer contour easy to flood-fill.
+      final connected = closeBinary(binary, width, height, radius: 1);
+      final dilated = dilate(connected, width, height, 3);
+      candidates.addAll(findDocumentQuadCandidates(dilated, width, height));
+    }
   }
 
   return pickBestQuad(candidates, width, height, previousQuad: previousQuad);
+}
+
+bool _buffersEffectivelyEqual(Uint8List a, Uint8List b) {
+  if (a.length != b.length || a.isEmpty) return false;
+  final step = max(1, a.length ~/ 256);
+  int difference = 0;
+  int samples = 0;
+  for (int i = 0; i < a.length; i += step) {
+    difference += (a[i] - b[i]).abs();
+    samples++;
+  }
+  return samples == 0 || difference / samples < 2.0;
 }
 
 /// Nearest-neighbor downsample of an RGBA buffer (stride 4).

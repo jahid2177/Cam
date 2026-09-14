@@ -30,7 +30,7 @@ List<Quad> findDocumentQuadCandidates(Uint8List mask, int width, int height) {
   final components = _connectedComponents(mask, width, height);
   components.sort((a, b) => b.length.compareTo(a.length));
 
-  final candidateCount = components.length < 5 ? components.length : 5;
+  final candidateCount = components.length < 8 ? components.length : 8;
   final results = <Quad>[];
 
   for (int i = 0; i < candidateCount; i++) {
@@ -208,8 +208,76 @@ Quad _quadOfScalars(List<double> sums, int count) => Quad(
 /// several otherwise-valid candidates instead of taking whichever the
 /// sweep reaches first.
 double _qualityScore(Quad quad, int width, int height) {
-  final areaRatio = _polygonArea(quad.points) / (width * height);
-  return areaRatio * (1 - _maxAngleDeviationFraction(quad));
+  final pts = quad.points;
+  final areaRatio = _polygonArea(pts) / (width * height);
+  final rectangularity = 1 - _maxAngleDeviationFraction(quad);
+  final parallelism = _oppositeEdgeParallelism(quad);
+  final sideBalance = _oppositeSideBalance(quad);
+  final borderPenalty = _borderHuggingPenalty(quad, width, height);
+
+  // Area remains the strongest signal, but geometric agreement prevents a
+  // large table/monitor/shadow contour from beating a smaller true page.
+  final geometry = 0.52 * rectangularity +
+      0.30 * parallelism +
+      0.18 * sideBalance;
+  return areaRatio * geometry * (1 - borderPenalty);
+}
+
+/// 1.0 when opposite edges are parallel, gradually approaching 0 as their
+/// directions diverge. Perspective allows convergence, so this is only a
+/// ranking signal, never a hard rejection rule.
+double _oppositeEdgeParallelism(Quad q) {
+  final p = q.points;
+  double similarity(Pt a, Pt b, Pt c, Pt d) {
+    final ux = b.x - a.x, uy = b.y - a.y;
+    final vx = d.x - c.x, vy = d.y - c.y;
+    final um = sqrt(ux * ux + uy * uy);
+    final vm = sqrt(vx * vx + vy * vy);
+    if (um == 0 || vm == 0) return 0;
+    return ((ux * vx + uy * vy).abs() / (um * vm)).clamp(0.0, 1.0);
+  }
+
+  return (similarity(p[0], p[1], p[3], p[2]) +
+          similarity(p[1], p[2], p[0], p[3])) /
+      2;
+}
+
+/// Rewards quads whose opposite sides are of comparable length while still
+/// tolerating the shortening expected under perspective.
+double _oppositeSideBalance(Quad q) {
+  final p = q.points;
+  final lengths = <double>[
+    _dist(p[0], p[1]),
+    _dist(p[1], p[2]),
+    _dist(p[2], p[3]),
+    _dist(p[3], p[0]),
+  ];
+  double ratio(double a, double b) {
+    final hi = max(a, b);
+    if (hi == 0) return 0;
+    return min(a, b) / hi;
+  }
+
+  return (ratio(lengths[0], lengths[2]) + ratio(lengths[1], lengths[3])) / 2;
+}
+
+/// Discourages the common false positive where the detector locks onto the
+/// camera-frame boundary itself. A real page may touch one side, so the
+/// penalty only becomes strong when several corners hug the outer frame.
+double _borderHuggingPenalty(Quad q, int width, int height) {
+  final marginX = width * 0.012;
+  final marginY = height * 0.012;
+  int hugging = 0;
+  for (final p in q.points) {
+    if (p.x <= marginX ||
+        p.x >= width - marginX ||
+        p.y <= marginY ||
+        p.y >= height - marginY) {
+      hugging++;
+    }
+  }
+  if (hugging < 2) return 0;
+  return (hugging - 1) * 0.12;
 }
 
 /// Largest per-corner deviation from a perfect 90-degree angle, across all
@@ -476,7 +544,15 @@ bool isPlausibleQuad(Quad quad, int width, int height) {
 
   final area = _polygonArea(pts);
   if (width <= 0 || height <= 0) return false;
-  if (area / (width * height) < kMinQuadAreaRatio) return false;
+  final areaRatio = area / (width * height);
+  if (areaRatio < kMinQuadAreaRatio) return false;
+
+  // Tiny edges usually mean two corners collapsed together even if the
+  // angle check happens to pass numerically.
+  final minEdge = min(width, height) * 0.06;
+  for (int i = 0; i < 4; i++) {
+    if (_dist(pts[i], pts[(i + 1) % 4]) < minEdge) return false;
+  }
 
   for (int i = 0; i < pts.length; i++) {
     final a = pts[(i - 1 + pts.length) % pts.length];

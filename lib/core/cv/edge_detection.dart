@@ -116,6 +116,93 @@ int otsuThreshold(Uint8List image) {
   return threshold;
 }
 
+
+
+/// Robust global contrast normalization using the 2nd and 98th percentile
+/// luminance values. This avoids letting a few specular highlights or deep
+/// shadows dominate the range, and improves edge visibility on white paper
+/// placed on a light desk or in dim/uneven lighting.
+Uint8List normalizeContrast(
+  Uint8List gray, {
+  double lowPercentile = 0.02,
+  double highPercentile = 0.98,
+}) {
+  if (gray.isEmpty) return Uint8List(0);
+  final hist = List<int>.filled(256, 0);
+  for (final v in gray) {
+    hist[v]++;
+  }
+
+  final lowTarget = (gray.length * lowPercentile).round();
+  final highTarget = (gray.length * highPercentile).round();
+  int running = 0;
+  int low = 0;
+  int high = 255;
+  for (int i = 0; i < 256; i++) {
+    running += hist[i];
+    if (running >= lowTarget) {
+      low = i;
+      break;
+    }
+  }
+  running = 0;
+  for (int i = 0; i < 256; i++) {
+    running += hist[i];
+    if (running >= highTarget) {
+      high = i;
+      break;
+    }
+  }
+
+  if (high - low < 12) return Uint8List.fromList(gray);
+  final scale = 255.0 / (high - low);
+  final out = Uint8List(gray.length);
+  for (int i = 0; i < gray.length; i++) {
+    out[i] = ((gray[i] - low) * scale).round().clamp(0, 255);
+  }
+  return out;
+}
+
+/// Binary closing (dilate then erode). It bridges small gaps in document
+/// borders caused by glare, text crossing the edge, or motion blur without
+/// requiring an excessively large dilation radius.
+Uint8List closeBinary(
+  Uint8List mask,
+  int width,
+  int height, {
+  int radius = 1,
+}) {
+  return erode(dilate(mask, width, height, radius), width, height, radius);
+}
+
+/// Binary erosion, implemented as two separable min-filter passes.
+Uint8List erode(Uint8List mask, int width, int height, int radius) {
+  final rowPass = Uint8List(width * height);
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      int v = 1;
+      for (int dx = -radius; dx <= radius && v == 1; dx++) {
+        final sx = x + dx;
+        if (sx < 0 || sx >= width || mask[y * width + sx] == 0) v = 0;
+      }
+      rowPass[y * width + x] = v;
+    }
+  }
+
+  final out = Uint8List(width * height);
+  for (int x = 0; x < width; x++) {
+    for (int y = 0; y < height; y++) {
+      int v = 1;
+      for (int dy = -radius; dy <= radius && v == 1; dy++) {
+        final sy = y + dy;
+        if (sy < 0 || sy >= height || rowPass[sy * width + x] == 0) v = 0;
+      }
+      out[y * width + x] = v;
+    }
+  }
+  return out;
+}
+
 /// Binarizes [image] against threshold [t]: returns a 0/1 mask.
 Uint8List threshold(Uint8List image, int t) {
   final out = Uint8List(image.length);
