@@ -8,6 +8,7 @@ import 'package:openscan/l10n/app_localizations.dart';
 import 'package:openscan/config/globals.dart';
 import 'package:openscan/core/cv/frame_adapter.dart';
 import 'package:openscan/core/data/file_operations.dart';
+import 'package:openscan/core/permissions/storage_permission_service.dart';
 import 'package:openscan/core/id_card/id_card_composer.dart';
 import 'package:openscan/core/settings/app_settings.dart';
 import 'package:openscan/core/theme/os_colors.dart';
@@ -607,6 +608,50 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       );
       return;
     }
+
+    final access = await StoragePermissionService.requestGalleryAccess();
+    if (!mounted) return;
+
+    if (access == StoragePermissionResult.permanentlyDenied) {
+      final openSettings = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Photos permission required'),
+              content: const Text(
+                'OpenScan cannot access your selected images because photo/storage '
+                'access has been permanently denied. Open App Settings and allow '
+                'Photos and videos access, then try again.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('Open Settings'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (openSettings) {
+        await StoragePermissionService.openSettings();
+      }
+      return;
+    }
+
+    if (access == StoragePermissionResult.denied) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Photo/storage permission was denied. Allow access to import images.',
+          ),
+        ),
+      );
+      return;
+    }
+
     try {
       final picked = await FileOperations().openGallery();
       if (picked.isEmpty || !mounted) return;
@@ -627,8 +672,8 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content:
-                Text(AppLocalizations.of(context)!.couldnt_open_gallery)),
+          content: Text(AppLocalizations.of(context)!.couldnt_open_gallery),
+        ),
       );
     }
   }
