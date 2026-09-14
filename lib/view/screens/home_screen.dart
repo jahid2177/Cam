@@ -348,7 +348,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final l10n = AppLocalizations.of(context)!;
     OSSheet.show(
       context: context,
-      title: 'OpenScan',
+      title: 'DocScan',
       builder: (sheetContext) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [

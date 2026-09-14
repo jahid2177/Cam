@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:openscan/core/data/file_operations.dart';
 import 'package:openscan/core/image_filter/filters/document_filters.dart';
 import 'package:openscan/core/settings/app_settings.dart';
 import 'package:openscan/core/theme/os_colors.dart';
@@ -147,6 +148,79 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  void _showPrivacyDetails() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => OSDialog(
+        title: 'Privacy',
+        message:
+            'DocScan keeps your scans on this device. It does not require an account, cloud sync, or telemetry. Camera access is used only for scanning, and media access is used only when you choose images from your device.',
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+        onConfirm: () => Navigator.pop(dialogContext),
+      ),
+    );
+  }
+
+  void _pickStorageLocation(AppSettings settings) {
+    OSSheet.show(
+      context: context,
+      title: 'Storage location',
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          OSSheetAction(
+            icon: Icons.download_rounded,
+            label: 'Downloads / DocScan',
+            trailing: settings.exportStorageLocation ==
+                    ExportStorageLocation.downloads
+                ? Icon(Icons.check_rounded,
+                    size: 20, color: sheetContext.os.accent)
+                : null,
+            onTap: () async {
+              await settings
+                  .setExportStorageLocation(ExportStorageLocation.downloads);
+              if (sheetContext.mounted) Navigator.pop(sheetContext);
+            },
+          ),
+          OSSheetAction(
+            icon: Icons.folder_special_rounded,
+            label: 'App folder',
+            trailing: settings.exportStorageLocation ==
+                    ExportStorageLocation.appFolder
+                ? Icon(Icons.check_rounded,
+                    size: 20, color: sheetContext.os.accent)
+                : null,
+            onTap: () async {
+              await settings
+                  .setExportStorageLocation(ExportStorageLocation.appFolder);
+              if (sheetContext.mounted) Navigator.pop(sheetContext);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showStorageInfo() async {
+    final dir = await FileOperations().exportDirectory();
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (dialogContext) => OSDialog(
+        title: 'Current storage',
+        message: dir.path,
+        confirmLabel: 'OK',
+        cancelLabel: 'Close',
+        onConfirm: () => Navigator.pop(dialogContext),
+      ),
+    );
+  }
+
+  void _openDocumentLibrary() {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   @override
   Widget build(BuildContext context) {
     final os = context.os;
@@ -220,42 +294,160 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: OSSpace.md),
               child: Container(
-                padding: const EdgeInsets.all(OSSpace.sm),
                 decoration: BoxDecoration(
                   color: os.surfaceVariant,
                   borderRadius: BorderRadius.circular(OSRadius.card),
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                clipBehavior: Clip.antiAlias,
+                child: Column(
                   children: [
-                    Icon(Icons.lock_outline_rounded,
-                        size: 18, color: os.onSurfaceVariant),
-                    const SizedBox(width: OSSpace.xs),
-                    Expanded(
-                      child: Text(
-                        l10n.privacy_body,
-                        style: OSTypography.caption
-                            .copyWith(color: os.onSurfaceVariant),
+                    _PrivacyStorageTile(
+                      icon: Icons.shield_outlined,
+                      title: 'Privacy',
+                      subtitle:
+                          'DocScan keeps your documents on this device. No account, no cloud, no telemetry.',
+                      onTap: _showPrivacyDetails,
+                    ),
+                    const _CardDivider(),
+                    _PrivacyStorageTile(
+                      icon: Icons.folder_outlined,
+                      title: 'Storage location',
+                      subtitle: 'Choose where exported scans are saved.',
+                      value: settings.exportStorageLocation ==
+                              ExportStorageLocation.downloads
+                          ? 'Downloads/DocScan'
+                          : 'App folder',
+                      onTap: () => _pickStorageLocation(settings),
+                    ),
+                    const _CardDivider(),
+                    _PrivacyStorageTile(
+                      icon: Icons.folder_open_rounded,
+                      title: 'Storage details',
+                      subtitle: 'View the exact folder currently used.',
+                      onTap: _showStorageInfo,
+                    ),
+                    const _CardDivider(),
+                    _PrivacyStorageTile(
+                      icon: Icons.description_outlined,
+                      title: 'Manage scanned files',
+                      subtitle: 'Open the document library to view or delete scans.',
+                      onTap: _openDocumentLibrary,
+                    ),
+                    const _CardDivider(),
+                    _PrivacyStorageTile(
+                      icon: Icons.delete_outline_rounded,
+                      title: l10n.cache,
+                      subtitle: 'Remove temporary files only.',
+                      value: _cacheLabel,
+                      onTap: () => showDialog(
+                        context: context,
+                        builder: (_) => OSDialog(
+                          title: l10n.clear_cache_q,
+                          message: l10n.clear_cache_body(_cacheLabel),
+                          confirmLabel: l10n.clear,
+                          destructive: true,
+                          onConfirm: _clearCache,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-            _ValueRow(
-              label: l10n.cache,
-              value: l10n.cache_clear_action(_cacheLabel),
-              onTap: () => showDialog(
-                context: context,
-                builder: (_) => OSDialog(
-                  title: l10n.clear_cache_q,
-                  message: l10n.clear_cache_body(_cacheLabel),
-                  confirmLabel: l10n.clear,
-                  destructive: true,
-                  onConfirm: _clearCache,
-                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CardDivider extends StatelessWidget {
+  const _CardDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Divider(
+      height: 1,
+      thickness: 1,
+      indent: 52,
+      color: context.os.outline.withValues(alpha: 0.45),
+    );
+  }
+}
+
+class _PrivacyStorageTile extends StatelessWidget {
+  const _PrivacyStorageTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.value,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String? value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final os = context.os;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: OSSpace.sm,
+          vertical: OSSpace.sm,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 36,
+              child: Icon(icon, size: 22, color: os.onSurfaceVariant),
+            ),
+            const SizedBox(width: OSSpace.xs),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: OSTypography.body.copyWith(
+                      color: os.onSurface,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: OSTypography.caption
+                        .copyWith(color: os.onSurfaceVariant),
+                  ),
+                ],
               ),
             ),
+            if (value != null) ...[
+              const SizedBox(width: OSSpace.xs),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.32,
+                ),
+                child: Text(
+                  value!,
+                  textAlign: TextAlign.end,
+                  style: OSTypography.label.copyWith(
+                    color: os.accent,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(width: 2),
+            Icon(Icons.chevron_right_rounded,
+                size: 20, color: os.onSurfaceVariant),
           ],
         ),
       ),
