@@ -150,7 +150,7 @@
   "language": "Language",
   "accent_color": "Accent color",
   "privacy_storage": "Privacy & storage",
-  "privacy_body": "OpenScan never sends your documents anywhere. No accounts, no cloud, no telemetry.",
+  "privacy_body": "DocScan never sends your documents anywhere. No accounts, no cloud, no telemetry.",
   "cache": "Cache",
   "clear_cache_q": "Clear cache?",
   "clear_cache_body": "Frees {size} of thumbnail data. Your documents are not affected.",
@@ -217,7 +217,7 @@
   "couldnt_open_gallery": "Couldn't open the gallery.",
   "couldnt_start_camera": "Couldn't start the camera — please go back and try again.",
   "camera_access_needed": "Camera access needed",
-  "camera_access_body": "OpenScan only uses your camera to scan pages — nothing leaves your device. Turn it on in Settings to continue.",
+  "camera_access_body": "DocScan only uses your camera to scan pages — nothing leaves your device. Turn it on in Settings to continue.",
   "done_count": "Done · {count}",
   "@done_count": {
     "placeholders": {
@@ -329,7 +329,7 @@
   "share_pdf": "Share PDF",
   "share_images": "Share images",
   "demo_scan_title": "Point at the page",
-  "demo_scan_body": "OpenScan finds the edges and takes the shot by itself when you hold still — or tap the shutter to take it yourself.",
+  "demo_scan_body": "DocScan finds the edges and takes the shot by itself when you hold still — or tap the shutter to take it yourself.",
   "demo_pages_title": "Keep going for more pages",
   "demo_pages_body": "Every shot joins the same document. Tap Done when you have them all.",
   "demo_adjust_title": "Straighten and clean up",
