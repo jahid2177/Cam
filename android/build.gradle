@@ -1,0 +1,30 @@
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url 'https://jitpack.io' }
+    }
+}
+
+// Fix namespace for old plugins that don't declare one (required for AGP 8+)
+subprojects {
+    afterEvaluate { project ->
+        if (project.plugins.hasPlugin('com.android.library') &&
+            project.android.hasProperty('namespace') &&
+            !project.android.namespace) {
+            project.android.namespace = project.group
+        }
+    }
+}
+
+rootProject.buildDir = '../build'
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(':app')
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
