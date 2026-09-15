@@ -461,7 +461,6 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final os = context.os;
-    final l10n = AppLocalizations.of(context)!;
     final documents = _visibleDocuments;
 
     return PopScope(
@@ -471,11 +470,8 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       child: Scaffold(
         backgroundColor: os.surface,
-        appBar: _selectionMode
-            ? _selectionAppBar(os)
-            : _libraryAppBar(os),
+        appBar: _selectionMode ? _selectionAppBar(os) : null,
         body: SafeArea(
-          top: false,
           child: RefreshIndicator(
             onRefresh: _refresh,
             color: os.accent,
@@ -483,69 +479,47 @@ class _HomeScreenState extends State<HomeScreen> {
             child: _body(os, documents),
           ),
         ),
-        bottomNavigationBar: _selectionMode ? _selectionBar(os) : null,
+        bottomNavigationBar: _selectionMode ? _selectionBar(os) : _bottomNav(os),
         floatingActionButton: _selectionMode
             ? null
-            : FloatingActionButton.extended(
+            : FloatingActionButton(
                 onPressed: () => _startScan('Live Scan'),
-                icon: const Icon(Icons.camera_alt_rounded, size: 20),
-                label: Text(l10n.scan),
                 backgroundColor: os.accent,
                 foregroundColor: os.onAccent,
+                elevation: 5,
+                shape: const CircleBorder(),
+                child: const Icon(Icons.camera_alt_rounded, size: 28),
               ),
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       ),
     );
   }
 
-  PreferredSizeWidget _libraryAppBar(OSColors os) {
-    final l10n = AppLocalizations.of(context)!;
-    return AppBar(
-      backgroundColor: os.surface,
-      titleSpacing: OSSpace.md + 2,
-      title: Text(l10n.library,
-          style: OSTypography.display.copyWith(fontSize: 26, height: 1.2)),
-      actions: [
-        IconButton(
-          tooltip: l10n.sort,
-          icon: const Icon(Icons.sort_rounded),
-          onPressed: _openSortSheet,
-        ),
-        IconButton(
-          tooltip: l10n.import_from_gallery_short,
-          icon: const Icon(Icons.add_photo_alternate_outlined),
-          onPressed: () => _startScan('Import from Gallery'),
-        ),
-        IconButton(
-          tooltip: l10n.more,
-          icon: const Icon(Icons.more_vert_rounded),
-          onPressed: _openOverflow,
-        ),
-        const SizedBox(width: OSSpace.xxs),
-      ],
-    );
-  }
-
-  /// Selection mode swaps in an inverted bar rather than tinting the
-  /// existing one, so "you are selecting" is legible at a glance.
   PreferredSizeWidget _selectionAppBar(OSColors os) {
     final l10n = AppLocalizations.of(context)!;
     return AppBar(
       backgroundColor: os.onSurface,
       foregroundColor: os.surface,
-      systemOverlayStyle: AppTheme.invertedOverlayStyle(
-          os, Theme.of(context).brightness),
+      systemOverlayStyle:
+          AppTheme.invertedOverlayStyle(os, Theme.of(context).brightness),
       leading: IconButton(
         icon: Icon(Icons.close_rounded, color: os.surface),
         onPressed: _clearSelection,
       ),
-      title: Text(l10n.n_selected(_selected.length),
-          style: OSTypography.subtitle.copyWith(color: os.surface)),
+      title: Text(
+        l10n.n_selected(_selected.length),
+        style: OSTypography.subtitle.copyWith(color: os.surface),
+      ),
       actions: [
         TextButton(
           onPressed: _selectAll,
-          child: Text(l10n.select_all,
-              style: OSTypography.label.copyWith(
-                  fontWeight: FontWeight.w700, color: os.accent)),
+          child: Text(
+            l10n.select_all,
+            style: OSTypography.label.copyWith(
+              fontWeight: FontWeight.w700,
+              color: os.accent,
+            ),
+          ),
         ),
         const SizedBox(width: OSSpace.xs),
       ],
@@ -557,7 +531,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
-            OSSpace.md + 2, OSSpace.xs, OSSpace.md + 2, OSSpace.md),
+          OSSpace.md + 2,
+          OSSpace.xs,
+          OSSpace.md + 2,
+          OSSpace.md,
+        ),
         child: Row(
           children: [
             Expanded(
@@ -587,26 +565,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final l10n = AppLocalizations.of(context)!;
     if (_loading) return _skeleton(os);
 
-    if (_documents.isEmpty) {
-      return _scrollable(
-        OSEmptyState(
-          icon: Icons.description_outlined,
-          title: l10n.no_documents_yet,
-          message: l10n.no_documents_body,
-          action: OSButton(
-            label: l10n.start_scanning,
-            onPressed: () => _startScan('Live Scan'),
-          ),
-        ),
-      );
-    }
-
     return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
         if (!_selectionMode)
-          SliverToBoxAdapter(child: _searchField(os)),
-        if (documents.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(26, 12, 26, 10),
+              child: _searchField(os),
+            ),
+          ),
+        if (_documents.isEmpty)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: OSEmptyState(
+              icon: Icons.description_outlined,
+              title: l10n.no_documents_yet,
+              message: l10n.no_documents_body,
+              action: OSButton(
+                label: l10n.start_scanning,
+                onPressed: () => _startScan('Live Scan'),
+              ),
+            ),
+          )
+        else if (documents.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
             child: OSEmptyState(
@@ -616,16 +598,8 @@ class _HomeScreenState extends State<HomeScreen> {
           )
         else
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(
-                OSSpace.md + 2, 0, OSSpace.md + 2, 96),
-            sliver: SliverGrid(
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: OSSpace.sm,
-                mainAxisSpacing: OSSpace.md,
-                childAspectRatio: 0.82,
-              ),
+            padding: const EdgeInsets.fromLTRB(26, 4, 26, 100),
+            sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, index) => _DocumentCard(
                   document: documents[index],
@@ -638,6 +612,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   onLongPress: () => _selectionMode
                       ? _toggleSelection(documents[index])
                       : _openDocumentMenu(documents[index]),
+                  onSelectionTap: () => _toggleSelection(documents[index]),
                 ),
                 childCount: documents.length,
               ),
@@ -649,69 +624,158 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _searchField(OSColors os) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          OSSpace.md + 2, 0, OSSpace.md + 2, OSSpace.sm),
+    return Container(
+      height: 64,
+      decoration: BoxDecoration(
+        color: os.surfaceContainer,
+        borderRadius: BorderRadius.circular(22),
+      ),
       child: TextField(
         controller: _searchController,
         onChanged: (value) => setState(() => _query = value.trim()),
-        style: OSTypography.body.copyWith(color: os.onSurface),
+        style: OSTypography.body.copyWith(color: os.onSurface, fontSize: 18),
         decoration: InputDecoration(
           hintText: l10n.search_documents,
-          prefixIcon:
-              Icon(Icons.search_rounded, size: 20, color: os.onSurfaceVariant),
-          prefixIconConstraints:
-              const BoxConstraints(minWidth: 40, minHeight: 40),
+          hintStyle: OSTypography.body.copyWith(
+            color: os.onSurfaceVariant,
+            fontSize: 18,
+          ),
+          prefixIcon: Icon(
+            Icons.search_rounded,
+            size: 28,
+            color: os.onSurfaceVariant,
+          ),
           suffixIcon: _query.isEmpty
               ? null
               : IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18),
+                  icon: const Icon(Icons.close_rounded, size: 20),
                   onPressed: () {
                     _searchController.clear();
                     setState(() => _query = '');
                   },
                 ),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(vertical: 19),
         ),
       ),
     );
   }
 
-  Widget _skeleton(OSColors os) {
+  Widget _bottomNav(OSColors os) {
     final l10n = AppLocalizations.of(context)!;
-    return CustomScrollView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      slivers: [
-        SliverToBoxAdapter(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: OSSpace.sm),
-              child: Text(l10n.refreshing,
-                  style:
-                      OSTypography.caption.copyWith(color: os.onSurfaceVariant)),
-            ),
+    return Material(
+      color: os.surface,
+      elevation: 12,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 78,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _navItem(os, Icons.home_rounded, 'Home', true, () {}),
+              _navItem(os, Icons.folder_outlined, 'Files', false, () {
+                _searchController.clear();
+                setState(() => _query = '');
+              }),
+              _navItem(os, Icons.grid_view_rounded, 'Tools', false, () {
+                _openToolsSheet();
+              }),
+              _navItem(os, Icons.settings_outlined, l10n.settings, false, () {
+                Navigator.pushNamed(context, AppRouter.settingsScreen)
+                    .then((_) => setState(() {}));
+              }),
+            ],
           ),
         ),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: OSSpace.md + 2),
-          sliver: SliverGrid(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: OSSpace.sm,
-              mainAxisSpacing: OSSpace.md,
-              childAspectRatio: 0.82,
-            ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) => Container(
-                decoration: BoxDecoration(
-                  color: os.surfaceContainer,
-                  borderRadius: BorderRadius.circular(OSRadius.card),
-                ),
+      ),
+    );
+  }
+
+  Widget _navItem(
+    OSColors os,
+    IconData icon,
+    String label,
+    bool active,
+    VoidCallback onTap,
+  ) {
+    final color = active ? os.accent : os.onSurfaceVariant;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: SizedBox(
+        width: 74,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 29),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              maxLines: 1,
+              style: OSTypography.caption.copyWith(
+                color: color,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
               ),
-              childCount: 6,
             ),
-          ),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+
+  void _openToolsSheet() {
+    final l10n = AppLocalizations.of(context)!;
+    OSSheet.show(
+      context: context,
+      title: 'Tools',
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          OSSheetAction(
+            icon: Icons.document_scanner_outlined,
+            label: l10n.scan,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _startScan('Live Scan');
+            },
+          ),
+          OSSheetAction(
+            icon: Icons.add_photo_alternate_outlined,
+            label: l10n.import_from_gallery,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _startScan('Import from Gallery');
+            },
+          ),
+          OSSheetAction(
+            icon: Icons.sort_rounded,
+            label: l10n.sort,
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _openSortSheet();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _skeleton(OSColors os) {
+    return ListView.separated(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(26, 90, 26, 100),
+      itemCount: 7,
+      separatorBuilder: (_, __) => const SizedBox(height: 12),
+      itemBuilder: (_, __) => Container(
+        height: 96,
+        decoration: BoxDecoration(
+          color: os.surfaceContainer,
+          borderRadius: BorderRadius.circular(14),
+        ),
+      ),
     );
   }
 
@@ -737,6 +801,7 @@ class _DocumentCard extends StatelessWidget {
     required this.selectionMode,
     required this.onTap,
     required this.onLongPress,
+    required this.onSelectionTap,
   });
 
   final DirectoryOS document;
@@ -745,18 +810,12 @@ class _DocumentCard extends StatelessWidget {
   final bool selectionMode;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final VoidCallback onSelectionTap;
 
-  /// The month/day abbreviation comes from [DateFormat] rather than a
-  /// hardcoded table, so it follows the locale — and its calendar's own
-  /// field order — instead of always reading as English.
-  String _subtitle(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+  String _date(BuildContext context) {
     final locale = Localizations.localeOf(context).toString();
-    final date = document.lastModified ?? document.created;
-    return l10n.date_and_pages(
-      DateFormat.MMMd(locale).format(date),
-      l10n.pages_count(document.imageCount),
-    );
+    final value = document.lastModified ?? document.created;
+    return DateFormat('dd/MM/yyyy HH:mm', locale).format(value);
   }
 
   @override
@@ -764,86 +823,114 @@ class _DocumentCard extends StatelessWidget {
     final os = context.os;
     final path = document.firstImgPath;
 
-    return GestureDetector(
+    return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: AnimatedContainer(
-              duration: OSMotion.selection,
-              curve: OSMotion.standardCurve,
-              width: double.infinity,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Row(
+          children: [
+            Container(
+              width: 82,
+              height: 100,
               decoration: BoxDecoration(
                 color: os.surfaceVariant,
-                borderRadius: BorderRadius.circular(OSRadius.card),
-                border: Border.all(
-                  color: selected ? os.accent : os.outline,
-                  width: selected ? 2.5 : 1,
-                ),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: os.outline.withOpacity(.35)),
               ),
               clipBehavior: Clip.antiAlias,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (path != null && path.isNotEmpty && File(path).existsSync())
-                    Image.file(
+              child: path != null && path.isNotEmpty && File(path).existsSync()
+                  ? Image.file(
                       File(path),
                       fit: BoxFit.cover,
                       alignment: Alignment.topCenter,
                       errorBuilder: (_, __, ___) => _placeholder(os),
                     )
-                  else
-                    _placeholder(os),
-                  if (selectionMode)
-                    Positioned(
-                      top: 6,
-                      right: 6,
-                      child: AnimatedScale(
-                        scale: selected ? 1 : 0.7,
-                        duration: OSMotion.selection,
-                        child: Container(
-                          height: 20,
-                          width: 20,
-                          decoration: BoxDecoration(
-                            color: selected ? os.accent : os.surface,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: os.outline),
+                  : _placeholder(os),
+            ),
+            const SizedBox(width: 18),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: OSTypography.subtitle.copyWith(
+                      color: os.onSurface,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          _date(context),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: OSTypography.body.copyWith(
+                            color: os.onSurfaceVariant,
+                            fontSize: 14,
                           ),
-                          child: selected
-                              ? Icon(Icons.check_rounded,
-                                  size: 14, color: os.onAccent)
-                              : null,
                         ),
                       ),
-                    ),
+                      const SizedBox(width: 10),
+                      Icon(
+                        Icons.description_rounded,
+                        size: 17,
+                        color: os.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${document.imageCount}',
+                        style: OSTypography.body.copyWith(
+                          color: os.onSurfaceVariant,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: OSSpace.xs),
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: OSTypography.label
-                .copyWith(fontWeight: FontWeight.w700, color: os.onSurface),
-          ),
-          Text(
-            _subtitle(context),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: OSTypography.caption.copyWith(color: os.onSurfaceVariant),
-          ),
-        ],
+            const SizedBox(width: 12),
+            InkWell(
+              onTap: onSelectionTap,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.all(6),
+                child: AnimatedContainer(
+                  duration: OSMotion.selection,
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: selected ? os.accent : Colors.transparent,
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(
+                      color: selected ? os.accent : os.onSurfaceVariant,
+                      width: 2,
+                    ),
+                  ),
+                  child: selected
+                      ? Icon(Icons.check_rounded, size: 20, color: os.onAccent)
+                      : null,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _placeholder(OSColors os) => ColoredBox(
         color: os.surfaceVariant,
-        child: Icon(Icons.description_outlined, color: os.outline),
+        child: Icon(Icons.description_outlined, color: os.outline, size: 30),
       );
 }
 
