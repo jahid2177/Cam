@@ -894,14 +894,6 @@ class _LiveScanScreenState extends State<LiveScanScreen>
                               alignment: Alignment.topCenter,
                               child: _modernTopBar(accent),
                             ),
-                            Positioned(
-                              left: OSSpace.md,
-                              right: OSSpace.md,
-                              top: 112,
-                              child: Center(
-                                child: _modernStatusPill(accent, onAccent),
-                              ),
-                            ),
                             Align(
                               alignment: Alignment.bottomCenter,
                               child: _modernBottomPanel(accent, onAccent),
@@ -976,17 +968,43 @@ class _LiveScanScreenState extends State<LiveScanScreen>
                           child: CustomPaint(
                               painter: const _ThirdsGridPainter()),
                         ),
-                      ValueListenableBuilder(
-                        valueListenable: _quadSmoother.smoothedQuad,
-                        builder: (context, quad, _) => quad == null
-                            ? const SizedBox.shrink()
-                            : LiveQuadOverlay(
-                                quad: quad,
-                                size: size,
-                                accent: accent,
-                                isImminent: _autoCaptureImminent,
+                      if (_captureMode == _ScanCaptureMode.idCard)
+                        IgnorePointer(
+                          child: CustomPaint(
+                            painter: _IdCardFramePainter(),
+                          ),
+                        )
+                      else
+                        ValueListenableBuilder(
+                          valueListenable: _quadSmoother.smoothedQuad,
+                          builder: (context, quad, _) => quad == null
+                              ? const SizedBox.shrink()
+                              : LiveQuadOverlay(
+                                  quad: quad,
+                                  size: size,
+                                  accent: accent,
+                                  isImminent: _autoCaptureImminent,
+                                ),
+                        ),
+                      if (_captureMode == _ScanCaptureMode.idCard)
+                        Positioned(
+                          top: 92,
+                          left: 0,
+                          right: 0,
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.48),
+                                borderRadius: BorderRadius.circular(28),
                               ),
-                      ),
+                              child: Text(
+                                _idCardSides.isEmpty ? 'Front' : 'Back',
+                                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                          ),
+                        ),
                       if (_captureFillQuad != null)
                         IgnorePointer(
                           child: AnimatedBuilder(
@@ -1049,8 +1067,9 @@ class _LiveScanScreenState extends State<LiveScanScreen>
     final canTorch = _cameraController != null &&
         _lensDirection == CameraLensDirection.back;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(OSSpace.md, OSSpace.sm, OSSpace.md, 0),
+    return Container(
+      color: const Color(0xE6000000),
+      padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
       child: Row(
         children: [
           _ModernCircleButton(
@@ -1064,16 +1083,16 @@ class _LiveScanScreenState extends State<LiveScanScreen>
             selectedColor: accent,
             onPressed: canTorch ? _toggleTorch : null,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 16),
           _ModernCircleButton(
             icon: Icons.auto_awesome_rounded,
             selected: _autoCaptureEnabled,
             selectedColor: accent,
             onPressed: _toggleAutoCapture,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 16),
           _HdBadge(accent: accent),
-          const SizedBox(width: 10),
+          const SizedBox(width: 16),
           _ModernCircleButton(
             icon: Icons.more_vert_rounded,
             onPressed: _openMoreSheet,
@@ -1161,62 +1180,72 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   }
 
   Widget _modernBottomPanel(Color accent, Color onAccent) {
+    if (_captureMode == _ScanCaptureMode.idCard) {
+      return _idCardBottomPanel(accent);
+    }
+
     final count = _capturedFiles.length;
+    final screenHeight = MediaQuery.sizeOf(context).height;
+    final compact = screenHeight < 700;
     return Container(
-      margin: const EdgeInsets.fromLTRB(0, 0, 0, 0),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-      decoration: const BoxDecoration(
-        color: Color(0xF21A1C21),
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(34),
-          topRight: Radius.circular(34),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x66000000),
-            blurRadius: 30,
-            offset: Offset(0, -8),
-          ),
-        ],
-      ),
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(18, compact ? 8 : 12, 18, compact ? 12 : 18),
+      color: Colors.black,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _sessionModeToggle(),
-          const SizedBox(height: 16),
-          _scanModeTabs(accent),
-          const SizedBox(height: 22),
+          Transform.translate(offset: Offset(0, compact ? -22 : -30), child: _sessionModeToggle()),
+          Transform.translate(offset: Offset(0, compact ? -16 : -22), child: _scanModeTabs(accent)),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: _PanelAction(icon: Icons.apps_rounded, label: 'All Features', onTap: _openFeaturesSheet)),
+              SizedBox(width: compact ? 4 : 8),
+              _modernShutter(accent),
+              SizedBox(width: compact ? 4 : 8),
+              Expanded(
+                child: Row(children: [
+                  Expanded(child: _PanelAction(icon: Icons.image_outlined, label: 'Import\nImages', onTap: _onImportPressed)),
+                  Expanded(child: _PanelAction(icon: Icons.file_open_outlined, label: count > 0 ? 'Import Files\n($count)' : 'Import Files', onTap: _onImportPressed)),
+                ]),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _idCardBottomPanel(Color accent) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(22, 0, 22, 22),
+      color: Colors.black,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 44, height: 4, decoration: BoxDecoration(color: accent, borderRadius: BorderRadius.circular(4))),
+          const SizedBox(height: 10),
+          Text('ID Card', style: TextStyle(color: accent, fontSize: 20, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 26),
+          Row(
             children: [
               Expanded(
                 child: _PanelAction(
-                  icon: Icons.grid_view_rounded,
-                  label: 'All Features',
-                  onTap: _openFeaturesSheet,
+                  icon: Icons.undo_rounded,
+                  label: _idCardSides.isEmpty ? 'Back' : 'Retake',
+                  onTap: _idCardSides.isEmpty ? () => _selectCaptureMode(_ScanCaptureMode.scan) : _onUndoLastPressed,
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: _modernShutter(accent),
-              ),
+              _modernShutter(accent),
               Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _PanelAction(
-                      icon: Icons.image_outlined,
-                      label: 'Images',
-                      onTap: _onImportPressed,
-                    ),
-                    _PanelAction(
-                      icon: Icons.folder_outlined,
-                      label: count > 0 ? 'Files ($count)' : 'Files',
-                      onTap: count > 0 && !_capturing
-                          ? _onDonePressed
-                          : () => Navigator.pop(context, null),
-                    ),
-                  ],
+                child: _PanelAction(
+                  icon: Icons.image_outlined,
+                  label: 'Import Images',
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('ID Card import will be added after camera capture flow.')),
+                    );
+                  },
                 ),
               ),
             ],
@@ -1278,18 +1307,12 @@ class _LiveScanScreenState extends State<LiveScanScreen>
           accent: accent,
           onTap: () => _selectCaptureMode(_ScanCaptureMode.scan),
         ),
-        const SizedBox(width: 36),
+        const SizedBox(width: 48),
         _ModeTab(
           label: 'ID Cards',
           selected: _captureMode == _ScanCaptureMode.idCard,
           accent: accent,
           onTap: () => _selectCaptureMode(_ScanCaptureMode.idCard),
-        ),
-        const SizedBox(width: 36),
-        _ModeTab(
-          label: 'Translate',
-          selected: false,
-          onTap: () => _selectCaptureMode(_ScanCaptureMode.translate),
         ),
       ],
     );
@@ -1298,8 +1321,8 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   Widget _modernShutter(Color accent) {
     if (_capturing) {
       return SizedBox(
-        width: 92,
-        height: 92,
+        width: 88,
+        height: 88,
         child: Center(child: CircularProgressIndicator(color: accent)),
       );
     }
@@ -1309,8 +1332,8 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       onLongPress: _toggleAutoCapture,
       onTap: _cameraController != null ? _onCapturePressed : null,
       child: SizedBox(
-        width: 92,
-        height: 92,
+        width: 88,
+        height: 88,
         child: Stack(
           alignment: Alignment.center,
           children: [
@@ -1318,8 +1341,8 @@ class _LiveScanScreenState extends State<LiveScanScreen>
               _PulseRing(color: accent),
             AnimatedContainer(
               duration: const Duration(milliseconds: 180),
-              width: 86,
-              height: 86,
+              width: 82,
+              height: 82,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
@@ -1843,22 +1866,20 @@ class _ModernCircleButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selectedColor ?? Theme.of(context).colorScheme.primary;
-    return Material(
-      color: selected ? color : const Color(0x991C1F24),
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onPressed,
-        child: SizedBox(
-          width: 54,
-          height: 54,
-          child: Icon(
-            icon,
-            size: 28,
-            color: onPressed == null ? Colors.white38 : Colors.white,
-          ),
-        ),
+    final active = selectedColor ?? Theme.of(context).colorScheme.primary;
+    return IconButton(
+      onPressed: onPressed,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+      splashRadius: 24,
+      icon: Icon(
+        icon,
+        size: 30,
+        color: onPressed == null
+            ? Colors.white30
+            : selected
+                ? active
+                : Colors.white,
       ),
     );
   }
@@ -1872,21 +1893,19 @@ class _HdBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 58,
-      height: 58,
+      width: 42,
+      height: 32,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: accent,
-        shape: BoxShape.circle,
-        boxShadow: const [
-          BoxShadow(color: Color(0x33000000), blurRadius: 8),
-        ],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(4),
       ),
       child: const Text(
         'HD',
         style: TextStyle(
           color: Colors.black,
-          fontSize: 18,
+          fontSize: 15,
+          height: 1,
           fontWeight: FontWeight.w900,
         ),
       ),
@@ -1908,13 +1927,13 @@ class _SegmentButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: selected ? const Color(0xFF5B667A) : Colors.transparent,
+      color: selected ? const Color(0xFF777777) : Colors.transparent,
       borderRadius: BorderRadius.circular(24),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 9),
           child: Text(
             label,
             textAlign: TextAlign.center,
@@ -2000,7 +2019,7 @@ class _PanelAction extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 30),
+            Icon(icon, color: Colors.white, size: 32),
             const SizedBox(height: 8),
             Text(
               label,
@@ -2009,7 +2028,8 @@ class _PanelAction extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 12,
+                fontSize: 13,
+                height: 1.15,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -2306,6 +2326,39 @@ class _PulseRingState extends State<_PulseRing>
 
 /// Rule-of-thirds guides, drawn hairline-thin so they never compete with
 /// the detected document boundary.
+class _IdCardFramePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    const ratio = 1.586;
+    final frameWidth = size.width * 0.88;
+    final frameHeight = frameWidth / ratio;
+    final left = (size.width - frameWidth) / 2;
+    final top = (size.height - frameHeight) * 0.43;
+    final rect = Rect.fromLTWH(left, top, frameWidth, frameHeight);
+
+    final shade = Paint()..color = Colors.black.withValues(alpha: 0.18);
+    final outer = Path()..addRect(Offset.zero & size);
+    final hole = Path()..addRRect(RRect.fromRectAndRadius(rect, const Radius.circular(14)));
+    canvas.drawPath(Path.combine(PathOperation.difference, outer, hole), shade);
+
+    final p = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 5
+      ..strokeCap = StrokeCap.square
+      ..style = PaintingStyle.stroke;
+    const len = 38.0;
+    final path = Path();
+    path.moveTo(rect.left, rect.top + len); path.lineTo(rect.left, rect.top); path.lineTo(rect.left + len, rect.top);
+    path.moveTo(rect.right - len, rect.top); path.lineTo(rect.right, rect.top); path.lineTo(rect.right, rect.top + len);
+    path.moveTo(rect.left, rect.bottom - len); path.lineTo(rect.left, rect.bottom); path.lineTo(rect.left + len, rect.bottom);
+    path.moveTo(rect.right - len, rect.bottom); path.lineTo(rect.right, rect.bottom); path.lineTo(rect.right, rect.bottom - len);
+    canvas.drawPath(path, p);
+  }
+
+  @override
+  bool shouldRepaint(covariant _IdCardFramePainter oldDelegate) => false;
+}
+
 class _ThirdsGridPainter extends CustomPainter {
   const _ThirdsGridPainter();
 
