@@ -18,23 +18,23 @@ class AutoCaptureDetector {
   /// this is set low enough to not itself become the binding constraint —
   /// [kMinStableDuration] is the actual timing knob; both conditions must
   /// hold.
-  static const int kStableFrameCount = 4;
+  static const int kStableFrameCount = 5;
 
   /// Max per-corner movement between consecutive frames, as a fraction of
   /// the normalized [0,1] coordinate space, for a frame to count as "still"
   /// relative to the previous one. Starting point for on-device tuning.
-  static const double kPositionToleranceFraction = 0.016;
+  static const double kPositionToleranceFraction = 0.013;
 
   /// Do not auto-capture a tiny rectangle in the distance. Manual capture
   /// remains available, but automatic capture waits until the document is
   /// large enough to produce a useful crop.
-  static const double kMinDocumentAreaFraction = 0.12;
+  static const double kMinDocumentAreaFraction = 0.15;
 
   /// Minimum wall-clock span the stable window must cover even if enough
   /// frames arrived faster than that, so a burst of quick results can't
   /// satisfy the frame-count alone. Primary knob for how long a document
   /// must be held still before auto-capture fires.
-  static const Duration kMinStableDuration = Duration(milliseconds: 660);
+  static const Duration kMinStableDuration = Duration(milliseconds: 850);
 
   /// Cooldown after any capture (auto or manual) before auto-capture can
   /// fire again, so a continuously-open batch session doesn't immediately
@@ -134,13 +134,40 @@ class AutoCaptureDetector {
 
   bool _isWithinTolerance(Quad a, Quad b) {
     final pa = a.points, pb = b.points;
+    double meanMovement = 0;
     for (int i = 0; i < 4; i++) {
       final dx = (pa[i].x - pb[i].x).abs();
       final dy = (pa[i].y - pb[i].y).abs();
       if (dx > kPositionToleranceFraction || dy > kPositionToleranceFraction) {
         return false;
       }
+      meanMovement += (dx + dy) / 2;
     }
+    meanMovement /= 4;
+    if (meanMovement > kPositionToleranceFraction * 0.55) return false;
+
+    final areaA = _area(a);
+    final areaB = _area(b);
+    if (areaA <= 0 || areaB <= 0) return false;
+    final areaDrift = (areaA - areaB).abs() / areaA;
+    if (areaDrift > 0.045) return false;
+
+    final centerAx = pa.fold<double>(0, (v, p) => v + p.x) / 4;
+    final centerAy = pa.fold<double>(0, (v, p) => v + p.y) / 4;
+    final centerBx = pb.fold<double>(0, (v, p) => v + p.x) / 4;
+    final centerBy = pb.fold<double>(0, (v, p) => v + p.y) / 4;
+    if ((centerAx - centerBx).abs() > 0.008 ||
+        (centerAy - centerBy).abs() > 0.008) return false;
     return true;
+  }
+
+  double _area(Quad q) {
+    final p = q.points;
+    double area = 0;
+    for (int i = 0; i < 4; i++) {
+      final a = p[i], b = p[(i + 1) % 4];
+      area += a.x * b.y - b.x * a.y;
+    }
+    return area.abs() / 2;
   }
 }

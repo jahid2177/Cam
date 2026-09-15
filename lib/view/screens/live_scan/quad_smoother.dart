@@ -62,7 +62,7 @@ class QuadSmoother {
   /// smoothed quad is actually cleared. A single momentary miss (motion
   /// blur, a hand briefly crossing the frame) shouldn't flicker the
   /// overlay away or reset `AutoCaptureDetector`'s stability window.
-  static const Duration kNullGracePeriod = Duration(milliseconds: 500);
+  static const Duration kNullGracePeriod = Duration(milliseconds: 650);
 
   /// Average per-corner distance (as a fraction of the normalized space's
   /// diagonal) between two *consecutive raw* detections beyond which the
@@ -76,14 +76,14 @@ class QuadSmoother {
   /// filters then drag the whole overlay toward it — which is what a jump
   /// looks like on screen. A real document being moved by hand crosses far
   /// less than this between two consecutive samples.
-  static const double kJumpDistanceFraction = 0.06;
+  static const double kJumpDistanceFraction = 0.052;
 
   /// Motion smaller than this average per-corner fraction is treated as
   /// sensor/contour jitter rather than intentional movement. The raw track
   /// stays anchored, which prevents tiny threshold-to-threshold changes
   /// from continuously exciting the position filters while a page is held
   /// still.
-  static const double kStationaryDeadbandFraction = 0.0025;
+  static const double kStationaryDeadbandFraction = 0.0032;
 
   /// How many consecutive raw samples landing within
   /// [kJumpDistanceFraction] of *each other* (not of the previously
