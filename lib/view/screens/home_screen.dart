@@ -681,7 +681,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 setState(() => _query = '');
               }),
               _navItem(os, Icons.grid_view_rounded, 'Tools', false, () {
-                _openToolsSheet();
+                Navigator.pushNamed(context, AppRouter.toolsScreen);
               }),
               _navItem(os, Icons.settings_outlined, l10n.settings, false, () {
                 Navigator.pushNamed(context, AppRouter.settingsScreen)
