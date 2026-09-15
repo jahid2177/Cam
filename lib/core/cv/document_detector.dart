@@ -14,7 +14,7 @@ import 'models/quad.dart';
 /// quad is scaled back up to the original image size before being
 /// returned, since [DetectionSuccess.quad] is always in original-image
 /// coordinates.
-const int kDetectionMaxDimension = 700;
+const int kDetectionMaxDimension = 760;
 
 /// Entry point designed to be run via `compute()`. Takes the image file
 /// path and returns a [DetectionResult] — never throws, so a caller can
@@ -98,31 +98,37 @@ Quad? detectQuadFromGrayscale(Uint8List gray, int width, int height,
     {Quad? previousQuad}) {
   if (width < 8 || height < 8 || gray.length != width * height) return null;
 
-  // Run the detector on both the original luminance and a robustly
-  // contrast-normalized copy. The second path is especially helpful for
-  // white-on-light and dim scenes, while keeping the original path for
-  // naturally high-contrast frames where normalization is unnecessary.
-  final normalized = normalizeContrast(gray);
+  // Two luminance views make the detector much less sensitive to lighting:
+  // raw preserves naturally strong borders; normalized recovers white paper
+  // on pale backgrounds and documents under uneven illumination.
+  final normalized = normalizeContrast(gray, lowPercentile: 0.015, highPercentile: 0.985);
   final sources = <Uint8List>[gray];
-  if (!_buffersEffectivelyEqual(gray, normalized)) {
-    sources.add(normalized);
-  }
+  if (!_buffersEffectivelyEqual(gray, normalized)) sources.add(normalized);
 
   final candidates = <Quad>[];
   for (final source in sources) {
     final blurred = gaussianBlur3(source, width, height);
     final magnitude = sobelMagnitude(blurred, width, height);
-    final baseThreshold = otsuThreshold(magnitude).clamp(18, 210);
 
+    final otsu = otsuThreshold(magnitude).clamp(16, 220);
+    final p72 = percentileThreshold(magnitude, 0.72).clamp(14, 235);
+    final p82 = percentileThreshold(magnitude, 0.82).clamp(16, 245);
+
+    // Use both histogram separation (Otsu) and strong-edge percentiles.
+    // De-duplicate close thresholds so difficult frames get more strategies
+    // without multiplying contour work on ordinary frames.
+    final thresholds = <int>{};
     for (final multiplier in _thresholdMultipliers) {
-      final t = (baseThreshold * multiplier).round().clamp(12, 245);
-      final binary = threshold(magnitude, t);
+      thresholds.add((otsu * multiplier).round().clamp(12, 245));
+    }
+    thresholds.add(p72);
+    thresholds.add(p82);
+    thresholds.add(((otsu + p72) / 2).round().clamp(12, 245));
 
-      // Radius 3 preserves nearby parallel edges better than a very large
-      // dilation. Closing reconnects short broken border segments before a
-      // modest second dilation makes the outer contour easy to flood-fill.
+    for (final t in thresholds) {
+      final binary = threshold(magnitude, t);
       final connected = closeBinary(binary, width, height, radius: 1);
-      final dilated = dilate(connected, width, height, 3);
+      final dilated = dilate(connected, width, height, 2);
       candidates.addAll(findDocumentQuadCandidates(dilated, width, height));
     }
   }

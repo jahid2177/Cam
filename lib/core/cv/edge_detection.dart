@@ -117,6 +117,26 @@ int otsuThreshold(Uint8List image) {
 }
 
 
+/// Returns the requested histogram percentile (0..255). Useful alongside
+/// Otsu on gradient images: Otsu can become too low when a frame contains
+/// lots of texture/text, while a high gradient percentile keeps the mask
+/// focused on the strongest structural edges.
+int percentileThreshold(Uint8List image, double percentile) {
+  if (image.isEmpty) return 0;
+  final p = percentile.clamp(0.0, 1.0);
+  final hist = List<int>.filled(256, 0);
+  for (final v in image) {
+    hist[v]++;
+  }
+  final target = max(1, (image.length * p).round());
+  int running = 0;
+  for (int i = 0; i < 256; i++) {
+    running += hist[i];
+    if (running >= target) return i;
+  }
+  return 255;
+}
+
 
 /// Robust global contrast normalization using the 2nd and 98th percentile
 /// luminance values. This avoids letting a few specular highlights or deep

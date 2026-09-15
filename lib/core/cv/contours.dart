@@ -30,7 +30,7 @@ List<Quad> findDocumentQuadCandidates(Uint8List mask, int width, int height) {
   final components = _connectedComponents(mask, width, height);
   components.sort((a, b) => b.length.compareTo(a.length));
 
-  final candidateCount = components.length < 8 ? components.length : 8;
+  final candidateCount = components.length < 10 ? components.length : 10;
   final results = <Quad>[];
 
   for (int i = 0; i < candidateCount; i++) {
@@ -40,7 +40,7 @@ List<Quad> findDocumentQuadCandidates(Uint8List mask, int width, int height) {
     final hull = _convexHull(members);
     if (hull.length < 4) continue;
 
-    for (final epsilonFactor in const [0.02, 0.04, 0.06, 0.08, 0.1]) {
+    for (final epsilonFactor in const [0.018, 0.028, 0.04, 0.055, 0.075, 0.10]) {
       final simplified = hull.length <= 4
           ? hull
           : _simplifyClosedPolygon(hull, epsilonFactor);
@@ -62,7 +62,7 @@ List<Quad> findDocumentQuadCandidates(Uint8List mask, int width, int height) {
 /// (chasing whichever candidate merely sat closest to last frame, even a
 /// poor-quality one); this is a tie-breaker for temporal consistency
 /// between otherwise similarly-good candidates, not the primary signal.
-const double kPreviousQuadProximityWeight = 0.15;
+const double kPreviousQuadProximityWeight = 0.18;
 
 /// How far apart (average per-corner distance, as a fraction of the
 /// frame diagonal) two candidates may sit and still be treated as the
@@ -74,7 +74,7 @@ const double kCandidateClusterFraction = 0.03;
 /// is far more likely to be the real document edge than one that only a
 /// single parameter combination produced — and, crucially, it is the one
 /// that will still be there next frame.
-const double kCandidateSupportWeight = 0.12;
+const double kCandidateSupportWeight = 0.16;
 
 /// Picks the best detection from [candidates] (as gathered by
 /// [findDocumentQuadCandidates], possibly pooled from multiple masks).
@@ -214,18 +214,50 @@ double _qualityScore(Quad quad, int width, int height) {
   final parallelism = _oppositeEdgeParallelism(quad);
   final sideBalance = _oppositeSideBalance(quad);
   final borderPenalty = _borderHuggingPenalty(quad, width, height);
+  final documentRatio = _documentAspectScore(quad);
+  final fillScore = ((areaRatio - kMinQuadAreaRatio) / 0.55).clamp(0.0, 1.0);
 
-  // Area remains the strongest signal, but geometric agreement prevents a
-  // large table/monitor/shadow contour from beating a smaller true page.
-  final geometry = 0.52 * rectangularity +
-      0.30 * parallelism +
-      0.18 * sideBalance;
+  // Geometry dominates. Aspect ratio is deliberately only a preference:
+  // A4/Legal/Letter pages rise above monitor/table/shadow rectangles, while
+  // receipts, cards and strongly perspective-skewed pages remain eligible.
+  final geometry = 0.38 * rectangularity +
+      0.22 * parallelism +
+      0.16 * sideBalance +
+      0.14 * documentRatio +
+      0.10 * fillScore;
   return areaRatio * geometry * (1 - borderPenalty);
 }
 
 /// 1.0 when opposite edges are parallel, gradually approaching 0 as their
 /// directions diverge. Perspective allows convergence, so this is only a
 /// ranking signal, never a hard rejection rule.
+double _documentAspectScore(Quad q) {
+  final p = q.points;
+  final top = _dist(p[0], p[1]);
+  final right = _dist(p[1], p[2]);
+  final bottom = _dist(p[2], p[3]);
+  final left = _dist(p[3], p[0]);
+  final w = (top + bottom) / 2;
+  final h = (left + right) / 2;
+  if (w <= 0 || h <= 0) return 0;
+
+  final ratio = max(w, h) / min(w, h);
+  const targets = <double>[
+    1.4142, // A-series (A4 etc.)
+    1.5455, // US Letter
+    1.6471, // US Legal
+    1.5858, // common ID-1 card
+  ];
+  double best = double.infinity;
+  for (final target in targets) {
+    final error = ((ratio - target) / target).abs();
+    if (error < best) best = error;
+  }
+  // Perspective changes the apparent ratio, so decay softly rather than
+  // rejecting. Ratios within ~12% of a common document shape score highly.
+  return (1.0 - best / 0.55).clamp(0.0, 1.0);
+}
+
 double _oppositeEdgeParallelism(Quad q) {
   final p = q.points;
   double similarity(Pt a, Pt b, Pt c, Pt d) {
@@ -523,7 +555,7 @@ double _polygonArea(List<Pt> pts) {
 /// Minimum quad area as a fraction of the frame it was detected in.
 /// Rejects noise-sized detections that happen to form a valid convex
 /// quadrilateral but are too small to plausibly be the document.
-const double kMinQuadAreaRatio = 0.05;
+const double kMinQuadAreaRatio = 0.065;
 
 /// Minimum interior angle, in degrees, considered legal for a document
 /// corner. A real document photographed at even a steep angle still has
@@ -531,7 +563,7 @@ const double kMinQuadAreaRatio = 0.05;
 /// (or, symmetrically, above `180 - kMinQuadAngleDegrees`) has one corner
 /// that has effectively collapsed onto its neighbors — a sliver or
 /// near-triangle, not a usable crop target.
-const double kMinQuadAngleDegrees = 15.0;
+const double kMinQuadAngleDegrees = 22.0;
 
 /// Rejects degenerate quads before they're ever returned as a detection
 /// result: too small relative to the frame, or so thin/sliver-shaped
@@ -546,6 +578,17 @@ bool isPlausibleQuad(Quad quad, int width, int height) {
   if (width <= 0 || height <= 0) return false;
   final areaRatio = area / (width * height);
   if (areaRatio < kMinQuadAreaRatio) return false;
+  // A contour covering essentially the whole sensor is commonly the frame
+  // boundary itself, not a document. Keep a little headroom for pages that
+  // genuinely fill the preview.
+  if (areaRatio > 0.94) return false;
+
+  final edges = <double>[
+    for (int i = 0; i < 4; i++) _dist(pts[i], pts[(i + 1) % 4]),
+  ];
+  final longest = edges.reduce(max);
+  final shortest = edges.reduce(min);
+  if (shortest <= 0 || longest / shortest > 8.0) return false;
 
   // Tiny edges usually mean two corners collapsed together even if the
   // angle check happens to pass numerically.
