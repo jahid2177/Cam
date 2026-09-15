@@ -5,6 +5,8 @@ import 'package:openscan/core/theme/os_colors.dart';
 import 'package:openscan/core/theme/os_typography.dart';
 import 'package:openscan/logic/cubit/directory_cubit.dart';
 import 'package:openscan/view/screens/view_screen.dart';
+import 'package:openscan/view/screens/tools/extract_text_screen.dart';
+import 'package:openscan/view/screens/tools/scan_code_screen.dart';
 
 class ToolsScreen extends StatefulWidget {
   const ToolsScreen({super.key});
@@ -99,6 +101,12 @@ class _ToolsScreenState extends State<ToolsScreen> {
     switch (item.action) {
       case _ToolAction.idCard:
         _startScan();
+        break;
+      case _ToolAction.extractText:
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const ExtractTextScreen()));
+        break;
+      case _ToolAction.scanCode:
+        Navigator.push(context, MaterialPageRoute(builder: (_) => const ScanCodeScreen()));
         break;
       case _ToolAction.imageToPdf:
         _startScan(gallery: true);
