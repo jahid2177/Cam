@@ -27,6 +27,8 @@ dependencies:
   # fluttertoast: ^8.0.8
   image:
   image_picker:
+  google_mlkit_text_recognition: ^0.15.0
+  mobile_scanner: ^7.0.1
   intl:
   open_filex: ^4.7.0
   path:
