@@ -8,7 +8,7 @@ import 'package:camera_platform_interface/camera_platform_interface.dart'
 /// since this runs many times per second on live camera frames — the
 /// overlay is guidance-only, final detection always reruns at full
 /// resolution on the captured photo.
-const int kLiveDetectionMaxDimension = 320;
+const int kLiveDetectionMaxDimension = 480;
 
 /// Converts a live camera frame directly to a small grayscale buffer,
 /// downsampling in the same pass so the full-resolution frame is never
@@ -35,6 +35,13 @@ Uint8List? grayscaleFromFrame({
 
   switch (format) {
     case ImageFormatGroup.yuv420:
+    case ImageFormatGroup.nv21:
+      // CameraX commonly delivers Android image streams as NV21. The first
+      // plane is still the full-resolution Y/luma plane, so for document
+      // detection it can be consumed exactly like YUV420 without touching
+      // the interleaved chroma bytes. Rejecting NV21 here made live
+      // detection silently receive no frames on a number of Android 14-16
+      // devices.
       return _downsampleYPlane(
         yPlaneOrBgraBytes,
         bytesPerRow,
@@ -52,9 +59,23 @@ Uint8List? grayscaleFromFrame({
         dstW,
         dstH,
       );
-    case ImageFormatGroup.jpeg:
-    case ImageFormatGroup.nv21:
     case ImageFormatGroup.unknown:
+      // Some CameraX versions report UNKNOWN while still exposing a normal
+      // stride-aware luma plane. Accept it when the first plane is large
+      // enough to contain width x height luma samples.
+      if (bytesPerRow >= width &&
+          yPlaneOrBgraBytes.length >= bytesPerRow * height) {
+        return _downsampleYPlane(
+          yPlaneOrBgraBytes,
+          bytesPerRow,
+          width,
+          height,
+          dstW,
+          dstH,
+        );
+      }
+      return null;
+    case ImageFormatGroup.jpeg:
       return null;
   }
 }

@@ -263,3 +263,63 @@ Uint8List dilate(Uint8List mask, int width, int height, int radius) {
   }
   return out;
 }
+/// Inverse binary threshold: 1 for pixels <= [t], otherwise 0.
+/// Useful for finding a dark document on a light background while the
+/// regular [threshold] handles light documents on darker backgrounds.
+Uint8List thresholdBelow(Uint8List image, int t) {
+  final out = Uint8List(image.length);
+  for (int i = 0; i < image.length; i++) {
+    out[i] = image[i] <= t ? 1 : 0;
+  }
+  return out;
+}
+
+/// Returns the absolute difference between every pixel and the mean of a
+/// surrounding square window. This is a cheap adaptive-contrast map: unlike
+/// a global Sobel threshold it survives broad shadows, exposure gradients
+/// and white paper on a pale desk because each pixel is judged against its
+/// local neighbourhood rather than one threshold for the whole frame.
+Uint8List localContrastMagnitude(
+  Uint8List gray,
+  int width,
+  int height, {
+  int radius = 12,
+}) {
+  if (gray.length != width * height || width <= 0 || height <= 0) {
+    return Uint8List(0);
+  }
+
+  final integral = List<int>.filled((width + 1) * (height + 1), 0);
+  final stride = width + 1;
+  for (int y = 0; y < height; y++) {
+    int rowSum = 0;
+    for (int x = 0; x < width; x++) {
+      rowSum += gray[y * width + x];
+      integral[(y + 1) * stride + (x + 1)] =
+          integral[y * stride + (x + 1)] + rowSum;
+    }
+  }
+
+  int rectSum(int x0, int y0, int x1, int y1) {
+    return integral[(y1 + 1) * stride + (x1 + 1)] -
+        integral[y0 * stride + (x1 + 1)] -
+        integral[(y1 + 1) * stride + x0] +
+        integral[y0 * stride + x0];
+  }
+
+  final out = Uint8List(gray.length);
+  for (int y = 0; y < height; y++) {
+    final y0 = (y - radius).clamp(0, height - 1);
+    final y1 = (y + radius).clamp(0, height - 1);
+    for (int x = 0; x < width; x++) {
+      final x0 = (x - radius).clamp(0, width - 1);
+      final x1 = (x + radius).clamp(0, width - 1);
+      final count = (x1 - x0 + 1) * (y1 - y0 + 1);
+      final mean = rectSum(x0, y0, x1, y1) / count;
+      final difference = (gray[y * width + x] - mean).abs();
+      out[y * width + x] = (difference * 4.0).round().clamp(0, 255);
+    }
+  }
+  return out;
+}
+

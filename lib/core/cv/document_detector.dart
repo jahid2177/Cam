@@ -98,38 +98,105 @@ Quad? detectQuadFromGrayscale(Uint8List gray, int width, int height,
     {Quad? previousQuad}) {
   if (width < 8 || height < 8 || gray.length != width * height) return null;
 
-  // Two luminance views make the detector much less sensitive to lighting:
-  // raw preserves naturally strong borders; normalized recovers white paper
-  // on pale backgrounds and documents under uneven illumination.
-  final normalized = normalizeContrast(gray, lowPercentile: 0.015, highPercentile: 0.985);
+  // Multi-view preprocessing. Raw luminance preserves naturally sharp page
+  // borders; normalized luminance recovers low-contrast paper and uneven
+  // lighting. Running both is similar in spirit to production scanners that
+  // try several image representations and score the combined candidates.
+  final normalized = normalizeContrast(
+    gray,
+    lowPercentile: 0.01,
+    highPercentile: 0.99,
+  );
   final sources = <Uint8List>[gray];
   if (!_buffersEffectivelyEqual(gray, normalized)) sources.add(normalized);
 
   final candidates = <Quad>[];
+
+  // PASS 1: structural edges. This is the fastest/highest-confidence path
+  // and handles dark borders, printed paper, table contrast and perspective.
   for (final source in sources) {
     final blurred = gaussianBlur3(source, width, height);
     final magnitude = sobelMagnitude(blurred, width, height);
 
-    final otsu = otsuThreshold(magnitude).clamp(16, 220);
-    final p72 = percentileThreshold(magnitude, 0.72).clamp(14, 235);
-    final p82 = percentileThreshold(magnitude, 0.82).clamp(16, 245);
+    final otsu = otsuThreshold(magnitude).clamp(14, 220);
+    final p74 = percentileThreshold(magnitude, 0.74).clamp(12, 235);
+    final p84 = percentileThreshold(magnitude, 0.84).clamp(14, 245);
 
-    // Use both histogram separation (Otsu) and strong-edge percentiles.
-    // De-duplicate close thresholds so difficult frames get more strategies
-    // without multiplying contour work on ordinary frames.
-    final thresholds = <int>{};
-    for (final multiplier in _thresholdMultipliers) {
-      thresholds.add((otsu * multiplier).round().clamp(12, 245));
-    }
-    thresholds.add(p72);
-    thresholds.add(p82);
-    thresholds.add(((otsu + p72) / 2).round().clamp(12, 245));
+    final thresholds = <int>{
+      (otsu * 0.58).round().clamp(10, 245),
+      (otsu * 0.78).round().clamp(10, 245),
+      otsu,
+      (otsu * 1.22).round().clamp(10, 245),
+      p74,
+      p84,
+    };
 
     for (final t in thresholds) {
       final binary = threshold(magnitude, t);
-      final connected = closeBinary(binary, width, height, radius: 1);
-      final dilated = dilate(connected, width, height, 2);
+      // A slightly stronger close+dilate reconnects borders interrupted by
+      // glare, fingers, text crossing the page edge and motion blur.
+      final connected = closeBinary(binary, width, height, radius: 2);
+      final dilated = dilate(connected, width, height, 1);
       candidates.addAll(findDocumentQuadCandidates(dilated, width, height));
+    }
+  }
+
+  // PASS 2: filled luminance regions. Edge-only detectors commonly fail on
+  // a clean white page with a faint border. If the edge pass is uncertain,
+  // segment both bright-on-dark and dark-on-bright regions at several
+  // luminance cuts. A real page then becomes one large connected component
+  // whose convex hull gives the four corners even if its border is weak.
+  if (candidates.length < 4) {
+    final regionSource = sources.length > 1 ? sources.last : gray;
+    final blurred = gaussianBlur3(regionSource, width, height);
+    final lumOtsu = otsuThreshold(blurred).clamp(20, 235);
+    final p42 = percentileThreshold(blurred, 0.42).clamp(15, 240);
+    final p58 = percentileThreshold(blurred, 0.58).clamp(15, 240);
+    final p70 = percentileThreshold(blurred, 0.70).clamp(15, 245);
+    final cuts = <int>{lumOtsu, p42, p58, p70};
+
+    for (final cut in cuts) {
+      final bright = closeBinary(
+        threshold(blurred, cut),
+        width,
+        height,
+        radius: 2,
+      );
+      candidates.addAll(findDocumentQuadCandidates(bright, width, height));
+
+      final dark = closeBinary(
+        thresholdBelow(blurred, cut),
+        width,
+        height,
+        radius: 2,
+      );
+      candidates.addAll(findDocumentQuadCandidates(dark, width, height));
+    }
+  }
+
+  // PASS 3: adaptive local contrast. This is the difficult-light fallback
+  // for broad shadows and gradients where neither one global edge threshold
+  // nor one global luminance threshold separates page from background.
+  if (candidates.length < 2) {
+    final source = sources.length > 1 ? sources.last : gray;
+    final radius = (min(width, height) ~/ 14).clamp(6, 22).toInt();
+    final local = localContrastMagnitude(
+      source,
+      width,
+      height,
+      radius: radius,
+    );
+    final localOtsu = otsuThreshold(local).clamp(12, 210);
+    final localP72 = percentileThreshold(local, 0.72).clamp(10, 230);
+    final localP82 = percentileThreshold(local, 0.82).clamp(12, 240);
+    for (final t in <int>{localOtsu, localP72, localP82}) {
+      final mask = dilate(
+        closeBinary(threshold(local, t), width, height, radius: 2),
+        width,
+        height,
+        1,
+      );
+      candidates.addAll(findDocumentQuadCandidates(mask, width, height));
     }
   }
 

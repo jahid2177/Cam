@@ -30,7 +30,7 @@ List<Quad> findDocumentQuadCandidates(Uint8List mask, int width, int height) {
   final components = _connectedComponents(mask, width, height);
   components.sort((a, b) => b.length.compareTo(a.length));
 
-  final candidateCount = components.length < 10 ? components.length : 10;
+  final candidateCount = components.length < 18 ? components.length : 18;
   final results = <Quad>[];
 
   for (int i = 0; i < candidateCount; i++) {
@@ -555,7 +555,7 @@ double _polygonArea(List<Pt> pts) {
 /// Minimum quad area as a fraction of the frame it was detected in.
 /// Rejects noise-sized detections that happen to form a valid convex
 /// quadrilateral but are too small to plausibly be the document.
-const double kMinQuadAreaRatio = 0.065;
+const double kMinQuadAreaRatio = 0.035;
 
 /// Minimum interior angle, in degrees, considered legal for a document
 /// corner. A real document photographed at even a steep angle still has
@@ -592,7 +592,7 @@ bool isPlausibleQuad(Quad quad, int width, int height) {
 
   // Tiny edges usually mean two corners collapsed together even if the
   // angle check happens to pass numerically.
-  final minEdge = min(width, height) * 0.06;
+  final minEdge = min(width, height) * 0.04;
   for (int i = 0; i < 4; i++) {
     if (_dist(pts[i], pts[(i + 1) % 4]) < minEdge) return false;
   }
