@@ -44,13 +44,29 @@ Uint8List gaussianBlur3(Uint8List gray, int width, int height) {
   return out;
 }
 
-/// Sobel gradient magnitude, clamped to 0-255. Stands in for OpenCV's
-/// `Canny` step: rather than reproducing full non-max-suppression plus
-/// hysteresis, the magnitude image is thresholded (see [otsuThreshold]) and
-/// then dilated/closed, which is sufficient to find the outer boundary of a
-/// photographed document.
-Uint8List sobelMagnitude(Uint8List gray, int width, int height) {
-  final out = Uint8List(width * height);
+/// Directional Sobel gradients plus their magnitude (clamped to 0-255, same
+/// range [sobelMagnitude] used to return on its own). [gx]/[gy] are signed
+/// and unclamped — needed by [nonMaxSuppress] to know each pixel's gradient
+/// *direction*, not just its strength, which plain magnitude thresholding
+/// throws away.
+class SobelGradients {
+  final Int32List gx;
+  final Int32List gy;
+  final Uint8List magnitude;
+  final int width;
+  final int height;
+
+  const SobelGradients(this.gx, this.gy, this.magnitude, this.width, this.height);
+}
+
+/// Computes Sobel gx/gy and their magnitude in one pass. Stands in for
+/// OpenCV's `Sobel(dx=1,dy=0)` / `Sobel(dx=0,dy=1)` pair, which Canny needs
+/// both channels of (magnitude alone isn't enough to suppress non-maxima
+/// along the gradient direction — see [nonMaxSuppress]).
+SobelGradients sobelGradients(Uint8List gray, int width, int height) {
+  final gx = Int32List(width * height);
+  final gy = Int32List(width * height);
+  final mag = Uint8List(width * height);
 
   int at(int x, int y) {
     final cx = x.clamp(0, width - 1);
@@ -60,20 +76,134 @@ Uint8List sobelMagnitude(Uint8List gray, int width, int height) {
 
   for (int y = 0; y < height; y++) {
     for (int x = 0; x < width; x++) {
-      final gx = -at(x - 1, y - 1) -
+      final gxv = -at(x - 1, y - 1) -
           2 * at(x - 1, y) -
           at(x - 1, y + 1) +
           at(x + 1, y - 1) +
           2 * at(x + 1, y) +
           at(x + 1, y + 1);
-      final gy = -at(x - 1, y - 1) -
+      final gyv = -at(x - 1, y - 1) -
           2 * at(x, y - 1) -
           at(x + 1, y - 1) +
           at(x - 1, y + 1) +
           2 * at(x, y + 1) +
           at(x + 1, y + 1);
-      final mag = sqrt((gx * gx + gy * gy).toDouble());
-      out[y * width + x] = mag.clamp(0.0, 255.0).round();
+      final idx = y * width + x;
+      gx[idx] = gxv;
+      gy[idx] = gyv;
+      final m = sqrt((gxv * gxv + gyv * gyv).toDouble());
+      mag[idx] = m.clamp(0.0, 255.0).round();
+    }
+  }
+  return SobelGradients(gx, gy, mag, width, height);
+}
+
+/// Sobel gradient magnitude, clamped to 0-255. Kept as a thin wrapper over
+/// [sobelGradients] for callers that only need magnitude.
+Uint8List sobelMagnitude(Uint8List gray, int width, int height) =>
+    sobelGradients(gray, width, height).magnitude;
+
+/// Thins raw Sobel magnitude down to single-pixel-wide ridges by keeping
+/// only local maxima along each pixel's gradient direction (quantized to
+/// the 4 principal directions: 0°/45°/90°/135°) and zeroing everything
+/// else — the non-maximum-suppression step of a real Canny detector.
+///
+/// This is the piece plain magnitude-thresholding skips, and the gap it
+/// leaves matters: thresholding raw magnitude keeps every pixel on a
+/// blurry multi-pixel-wide gradient ramp, so a document edge comes out as
+/// a thick smear rather than a thin line. That smear then swallows nearby
+/// detail (two close edges merge into one blob), rounds off corners after
+/// [dilate]/[closeBinary], and shifts where [_convexHull]-style corner
+/// extraction thinks the boundary actually is. Suppressing to the true
+/// ridge first fixes all three before hysteresis ever runs.
+Uint8List nonMaxSuppress(SobelGradients g) {
+  final width = g.width, height = g.height;
+  final out = Uint8List(width * height);
+
+  int magAt(int x, int y) {
+    if (x < 0 || x >= width || y < 0 || y >= height) return 0;
+    return g.magnitude[y * width + x];
+  }
+
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      final idx = y * width + x;
+      final m = g.magnitude[idx];
+      if (m == 0) continue;
+
+      final gx = g.gx[idx], gy = g.gy[idx];
+      // Angle of the gradient (perpendicular to the edge), quantized into
+      // 4 bins spanning 180 degrees (gradient direction and its opposite
+      // are the same edge orientation).
+      var angle = atan2(gy, gx) * 180 / pi;
+      if (angle < 0) angle += 180;
+
+      int n1x, n1y, n2x, n2y;
+      if (angle < 22.5 || angle >= 157.5) {
+        // 0 degrees: horizontal gradient -> compare left/right.
+        n1x = x - 1; n1y = y; n2x = x + 1; n2y = y;
+      } else if (angle < 67.5) {
+        // 45 degrees.
+        n1x = x + 1; n1y = y - 1; n2x = x - 1; n2y = y + 1;
+      } else if (angle < 112.5) {
+        // 90 degrees: vertical gradient -> compare up/down.
+        n1x = x; n1y = y - 1; n2x = x; n2y = y + 1;
+      } else {
+        // 135 degrees.
+        n1x = x - 1; n1y = y - 1; n2x = x + 1; n2y = y + 1;
+      }
+
+      if (m >= magAt(n1x, n1y) && m >= magAt(n2x, n2y)) {
+        out[idx] = m;
+      }
+    }
+  }
+  return out;
+}
+
+/// Canny-style double-threshold hysteresis over a non-max-suppressed
+/// magnitude image. A pixel at or above [high] is a definite edge; a pixel
+/// between [low] and [high] is only kept if it is 8-connected, through a
+/// chain of other such pixels, to a definite edge. This is what lets a
+/// real document border survive glare, a shadow crossing one side, or a
+/// patch where the page-to-background contrast briefly dips — those
+/// segments fall between the thresholds and get reconnected to the strong
+/// edge on either side of them, instead of being dropped (too strict a
+/// single threshold) or letting equally-weak noise elsewhere in the frame
+/// in too (too lax a single threshold).
+Uint8List hysteresisThreshold(
+  Uint8List suppressed,
+  int width,
+  int height, {
+  required int low,
+  required int high,
+}) {
+  final out = Uint8List(width * height);
+  final queue = <int>[];
+
+  for (int i = 0; i < suppressed.length; i++) {
+    if (suppressed[i] >= high) {
+      out[i] = 1;
+      queue.add(i);
+    }
+  }
+
+  int head = 0;
+  while (head < queue.length) {
+    final idx = queue[head++];
+    final x = idx % width;
+    final y = idx ~/ width;
+    for (int dy = -1; dy <= 1; dy++) {
+      for (int dx = -1; dx <= 1; dx++) {
+        if (dx == 0 && dy == 0) continue;
+        final nx = x + dx, ny = y + dy;
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        final nIdx = ny * width + nx;
+        if (out[nIdx] == 0 && suppressed[nIdx] >= low) {
+          out[nIdx] = 1;
+          queue.add(nIdx);
+        }
+      }
     }
   }
   return out;
@@ -322,4 +452,3 @@ Uint8List localContrastMagnitude(
   }
   return out;
 }
-
