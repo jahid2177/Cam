@@ -1,4 +1,4 @@
-name: Build OpenScan Debug APK
+name: Build OpenScan Small Debug APK
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build-android:
-    name: Build OpenScan Debug APK
+    name: Build OpenScan ARM64 Debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -37,12 +37,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Show tool versions
-        run: |
-          flutter --version
-          dart --version
-          java -version
-
       - name: Disable Flutter analytics
         run: flutter config --no-analytics
 
@@ -53,8 +47,8 @@ jobs:
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
 
-      - name: Build debug APK only
-        run: flutter build apk --debug
+      - name: Build ARM64 debug APK only
+        run: flutter build apk --debug --target-platform=android-arm64
 
       - name: Prepare OpenScan debug APK
         shell: bash
@@ -62,6 +56,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           cp build/app/outputs/flutter-apk/app-debug.apk artifacts/OpenScan-debug.apk
+          echo "APK size:"
           ls -lh artifacts/OpenScan-debug.apk
 
       - name: Upload debug APK artifact
@@ -78,9 +73,10 @@ jobs:
           tag_name: openscan-debug-${{ github.run_number }}
           name: OpenScan Debug Build ${{ github.run_number }}
           body: |
-            OpenScan debug APK generated automatically by GitHub Actions.
+            OpenScan ARM64 debug APK generated automatically by GitHub Actions.
 
             Build type: DEBUG only
+            Target ABI: arm64-v8a only
             APK: OpenScan-debug.apk
             Commit: ${{ github.sha }}
           prerelease: true
