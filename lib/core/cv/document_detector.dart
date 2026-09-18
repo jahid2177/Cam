@@ -112,17 +112,27 @@ Quad? detectQuadFromGrayscale(Uint8List gray, int width, int height,
 
   final candidates = <Quad>[];
 
-  // PASS 1: structural edges. This is the fastest/highest-confidence path
-  // and handles dark borders, printed paper, table contrast and perspective.
+  // PASS 1: structural edges via a real Canny pipeline (gradients ->
+  // non-max suppression -> hysteresis), not a single blunt magnitude
+  // threshold. This is the fastest/highest-confidence path and handles
+  // dark borders, printed paper, table contrast and perspective.
   for (final source in sources) {
     final blurred = gaussianBlur3(source, width, height);
-    final magnitude = sobelMagnitude(blurred, width, height);
+    final gradients = sobelGradients(blurred, width, height);
+    final magnitude = gradients.magnitude;
+    // Thin the magnitude to single-pixel ridges once per source; every
+    // threshold pair below reuses this same suppressed map.
+    final suppressed = nonMaxSuppress(gradients);
 
     final otsu = otsuThreshold(magnitude).clamp(14, 220);
     final p74 = percentileThreshold(magnitude, 0.74).clamp(12, 235);
     final p84 = percentileThreshold(magnitude, 0.84).clamp(14, 245);
 
-    final thresholds = <int>{
+    // Each value here becomes hysteresis's *high* threshold; sweeping
+    // several (rather than trusting one Otsu/percentile estimate) keeps
+    // the pass robust when the page-to-background contrast is unusually
+    // low or high for the frame.
+    final highThresholds = <int>{
       (otsu * 0.58).round().clamp(10, 245),
       (otsu * 0.78).round().clamp(10, 245),
       otsu,
@@ -131,10 +141,14 @@ Quad? detectQuadFromGrayscale(Uint8List gray, int width, int height,
       p84,
     };
 
-    for (final t in thresholds) {
-      final binary = threshold(magnitude, t);
-      // A slightly stronger close+dilate reconnects borders interrupted by
-      // glare, fingers, text crossing the page edge and motion blur.
+    for (final high in highThresholds) {
+      // Classic Canny recommends a high:low ratio of roughly 2:1 to 3:1;
+      // 0.45 sits in that band and lets hysteresis bridge the low-
+      // contrast gaps a single threshold would otherwise break the
+      // border at (glare, fingers, text crossing the page edge, motion
+      // blur).
+      final low = (high * 0.45).round().clamp(6, high - 1);
+      final binary = hysteresisThreshold(suppressed, width, height, low: low, high: high);
       final connected = closeBinary(binary, width, height, radius: 2);
       final dilated = dilate(connected, width, height, 1);
       candidates.addAll(findDocumentQuadCandidates(dilated, width, height));
