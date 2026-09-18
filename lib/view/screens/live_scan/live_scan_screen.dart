@@ -286,13 +286,19 @@ class _LiveScanScreenState extends State<LiveScanScreen>
   }
 
   void _onFrame(CameraImage image) {
-    if (++_frameCounter % 3 != 0) return;
+    if (++_frameCounter % 2 != 0) return;
     if (_liveScanController.isBusy) return;
     // Detection is the heaviest work this screen does per frame, and its
     // result is meaningless mid-pinch anyway (the framing is changing
     // under it). Skipping it frees the CPU for the gesture, which is what
     // makes the zoom feel like it's tracking the fingers.
     if (_isZooming) return;
+
+    // Android devices using the CameraX backend can expose the live
+    // stream as either YUV420 or NV21. frame_adapter.dart understands
+    // both by reading the luma plane, but malformed/empty planes must not
+    // be allowed to stop the camera callback with a RangeError.
+    if (image.planes.isEmpty || image.planes[0].bytes.isEmpty) return;
 
     final gray = grayscaleFromFrame(
       yPlaneOrBgraBytes: image.planes[0].bytes,
@@ -302,7 +308,7 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       format: image.format.group,
       targetLongEdge: kLiveDetectionMaxDimension,
     );
-    if (gray == null) return;
+    if (gray == null || gray.isEmpty) return;
     _updateLowLight(gray);
 
     final scale = kLiveDetectionMaxDimension /

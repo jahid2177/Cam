@@ -174,12 +174,22 @@ class LiveScanController {
 /// 90-degree rotation rather than derived from live device orientation.
 @visibleForTesting
 Quad rotateQuadForPortrait(Quad quad, int frameWidth, int frameHeight) {
-  Pt rotate(Pt p) => Pt(frameHeight - p.y, p.x);
-  // Rotating the sensor-space corners doesn't preserve which corner is
-  // visually top-left in portrait space, so re-derive the canonical
-  // corner order from the rotated points with the same labelling rule
-  // used everywhere else in the app, instead of assuming positional
-  // correspondence with the pre-rotation quad.
-  final rotated = sortCorners(quad.points.map(rotate).toList());
-  return rotated.scaled(1 / frameHeight, 1 / frameWidth);
+  if (frameWidth <= 0 || frameHeight <= 0) return quad;
+
+  // Most Android camera streams arrive in sensor-native landscape
+  // orientation even while the preview is portrait, so they need a 90°
+  // rotation. Some CameraX/device combinations already deliver a
+  // portrait-shaped stream; rotating those a second time puts the quad in
+  // the wrong place and makes a valid detection look like a failure.
+  if (frameWidth > frameHeight) {
+    Pt rotate(Pt p) => Pt(frameHeight - p.y, p.x);
+    final rotated = sortCorners(quad.points.map(rotate).toList());
+    return rotated.scaled(1 / frameHeight, 1 / frameWidth);
+  }
+
+  // Already portrait-shaped: keep the detected geometry and only
+  // normalize it into overlay coordinates. Re-sort so corner labels stay
+  // canonical for the smoother/overlay code.
+  final ordered = sortCorners(quad.points);
+  return ordered.scaled(1 / frameWidth, 1 / frameHeight);
 }
