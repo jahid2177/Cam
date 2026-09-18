@@ -40,19 +40,90 @@ List<Quad> findDocumentQuadCandidates(Uint8List mask, int width, int height) {
     final hull = _convexHull(members);
     if (hull.length < 4) continue;
 
-    for (final epsilonFactor in const [0.018, 0.028, 0.04, 0.055, 0.075, 0.10]) {
+    for (final epsilonFactor in const [
+      0.012,
+      0.018,
+      0.028,
+      0.04,
+      0.055,
+      0.075,
+      0.10,
+      0.135,
+    ]) {
       final simplified = hull.length <= 4
           ? hull
           : _simplifyClosedPolygon(hull, epsilonFactor);
+
       if (simplified.length == 4 && _isConvex(simplified)) {
         final quad = sortCorners(simplified);
         if (isPlausibleQuad(quad, width, height)) {
           results.add(quad);
         }
+        continue;
+      }
+
+      // Real document borders are rarely a perfect four-vertex contour.
+      // Glare, shadows, fingers, text touching an edge and mild motion blur
+      // commonly leave a simplified convex hull with 5-10 vertices. The old
+      // detector discarded all of those, which made a visible A4/Legal page
+      // return no detection at all. For a small noisy polygon, try every
+      // cyclic 4-point subset and retain the strongest plausible document
+      // quadrilateral. The search is deliberately capped so live scanning
+      // remains bounded (C(10,4) = only 210 combinations).
+      if (simplified.length >= 5 && simplified.length <= 10) {
+        final recovered = _bestQuadFromConvexPolygon(
+          simplified,
+          width,
+          height,
+        );
+        if (recovered != null) results.add(recovered);
       }
     }
   }
   return results;
+}
+
+
+/// Recovers a four-corner document from a small convex polygon that contains
+/// extra vertices caused by a broken/noisy page border. Because [polygon] is
+/// already in convex cyclic order, selecting indices i<j<k<l preserves that
+/// order and cannot create a bow-tie. The candidate with the strongest
+/// document geometry is returned.
+Quad? _bestQuadFromConvexPolygon(
+  List<Pt> polygon,
+  int width,
+  int height,
+) {
+  if (polygon.length < 4 || polygon.length > 10) return null;
+
+  Quad? best;
+  double bestScore = double.negativeInfinity;
+  final n = polygon.length;
+  for (int a = 0; a < n - 3; a++) {
+    for (int b = a + 1; b < n - 2; b++) {
+      for (int c = b + 1; c < n - 1; c++) {
+        for (int d = c + 1; d < n; d++) {
+          final points = <Pt>[
+            polygon[a],
+            polygon[b],
+            polygon[c],
+            polygon[d],
+          ];
+          if (!_isConvex(points)) continue;
+
+          final quad = sortCorners(points);
+          if (!isPlausibleQuad(quad, width, height)) continue;
+
+          final score = _qualityScore(quad, width, height);
+          if (score > bestScore) {
+            bestScore = score;
+            best = quad;
+          }
+        }
+      }
+    }
+  }
+  return best;
 }
 
 /// Weight given to proximity to [previousQuad] (in [pickBestQuad]) versus
@@ -555,7 +626,7 @@ double _polygonArea(List<Pt> pts) {
 /// Minimum quad area as a fraction of the frame it was detected in.
 /// Rejects noise-sized detections that happen to form a valid convex
 /// quadrilateral but are too small to plausibly be the document.
-const double kMinQuadAreaRatio = 0.035;
+const double kMinQuadAreaRatio = 0.020;
 
 /// Minimum interior angle, in degrees, considered legal for a document
 /// corner. A real document photographed at even a steep angle still has

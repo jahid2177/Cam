@@ -8,7 +8,7 @@ import 'package:camera_platform_interface/camera_platform_interface.dart'
 /// since this runs many times per second on live camera frames — the
 /// overlay is guidance-only, final detection always reruns at full
 /// resolution on the captured photo.
-const int kLiveDetectionMaxDimension = 480;
+const int kLiveDetectionMaxDimension = 640;
 
 /// Converts a live camera frame directly to a small grayscale buffer,
 /// downsampling in the same pass so the full-resolution frame is never
