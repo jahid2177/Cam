@@ -294,12 +294,6 @@ class _LiveScanScreenState extends State<LiveScanScreen>
     // makes the zoom feel like it's tracking the fingers.
     if (_isZooming) return;
 
-    // Android devices using the CameraX backend can expose the live
-    // stream as either YUV420 or NV21. frame_adapter.dart understands
-    // both by reading the luma plane, but malformed/empty planes must not
-    // be allowed to stop the camera callback with a RangeError.
-    if (image.planes.isEmpty || image.planes[0].bytes.isEmpty) return;
-
     final gray = grayscaleFromFrame(
       yPlaneOrBgraBytes: image.planes[0].bytes,
       bytesPerRow: image.planes[0].bytesPerRow,
@@ -308,7 +302,7 @@ class _LiveScanScreenState extends State<LiveScanScreen>
       format: image.format.group,
       targetLongEdge: kLiveDetectionMaxDimension,
     );
-    if (gray == null || gray.isEmpty) return;
+    if (gray == null) return;
     _updateLowLight(gray);
 
     final scale = kLiveDetectionMaxDimension /
