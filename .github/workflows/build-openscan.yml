@@ -1,4 +1,4 @@
-name: Build OpenScan Android APK
+name: Build OpenScan Debug APK
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: openscan-android-${{ github.ref }}
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build-android:
-    name: Build Android APK
+    name: Build OpenScan Debug APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -53,47 +53,36 @@ jobs:
         run: flutter analyze --no-fatal-infos
         continue-on-error: true
 
-      # The project expects key.properties for release signing.
-      # For a zero-secret GitHub build, sign the release APK with the
-      # standard Android debug key on the CI runner. This is installable
-      # for testing, but should NOT be used for Play Store publishing.
-      - name: Configure CI signing
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path = Path('android/app/build.gradle')
-          text = path.read_text(encoding='utf-8')
-          old = 'signingConfig signingConfigs.release'
-          new = 'signingConfig signingConfigs.debug'
-
-          if old in text:
-              text = text.replace(old, new, 1)
-              path.write_text(text, encoding='utf-8')
-              print('CI signing configured: release build will use debug signing key.')
-          else:
-              print('Release signing line not found; leaving build.gradle unchanged.')
-          PY
-
-      - name: Build release APK
-        run: flutter build apk --release
-
-      - name: Build debug APK
+      - name: Build debug APK only
         run: flutter build apk --debug
 
-      - name: Collect APK files
+      - name: Prepare OpenScan debug APK
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p artifacts
-          cp build/app/outputs/flutter-apk/app-release.apk artifacts/OpenScan-release.apk
           cp build/app/outputs/flutter-apk/app-debug.apk artifacts/OpenScan-debug.apk
-          ls -lh artifacts
+          ls -lh artifacts/OpenScan-debug.apk
 
-      - name: Upload APK artifacts
+      - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenScan-Android-APK
-          path: artifacts/*.apk
+          name: OpenScan-debug-APK
+          path: artifacts/OpenScan-debug.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish debug APK to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: openscan-debug-${{ github.run_number }}
+          name: OpenScan Debug Build ${{ github.run_number }}
+          body: |
+            OpenScan debug APK generated automatically by GitHub Actions.
+
+            Build type: DEBUG only
+            APK: OpenScan-debug.apk
+            Commit: ${{ github.sha }}
+          prerelease: true
+          make_latest: false
+          files: artifacts/OpenScan-debug.apk
